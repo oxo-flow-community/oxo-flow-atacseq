@@ -1,0 +1,4 @@
+chr1	test	transcript	101	1900	.	+	.	gene_id "G1"; transcript_id "G1.1"; gene_biotype "protein_coding";
+chr1	test	exon	101	1900	.	+	.	gene_id "G1"; transcript_id "G1.1"; gene_biotype "protein_coding";
+chr2	test	transcript	201	1100	.	+	.	gene_id "G2"; transcript_id "G2.1"; gene_biotype "protein_coding";
+chr2	test	exon	201	1100	.	+	.	gene_id "G2"; transcript_id "G2.1"; gene_biotype "protein_coding";

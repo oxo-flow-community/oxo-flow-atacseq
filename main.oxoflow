@@ -1,0 +1,588 @@
+# oxo-flow-atacseq — port of nf-core/atacseq v2.1.2 (default main path)
+#
+# Single-end, BWA aligner, broad-peak MACS2 (all upstream defaults).
+# Fidelity notes for every upstream process live in README.md; steps that
+# are not ported (merged-replicate analysis, consensus peaks/DESeq2, ATAQV,
+# IGV, picard metrics, preseq, R QC plots, genome preparation) are listed
+# there with reasons and in metadata.json `excluded`.
+
+[workflow]
+name = "oxo-flow-atacseq"
+version = "2.1.2"
+description = "ATAC-seq peak calling and QC — FastQC → Trim Galore → BWA-MEM → markdup/filter → MACS2 → QC plots → MultiQC (port of nf-core/atacseq 2.1.2)"
+author = "oxo-flow-community"
+
+[config]
+# Reference inputs. Upstream obtains these from nf-core iGenomes (--genome);
+# this port expects pre-built files (see README "References").
+reference = "test/fixtures/genome/genome.fa"          # params.fasta
+bwa_index = "test/fixtures/genome/genome.fa"          # params.bwa — index prefix (.amb/.ann/.bwt/.pac/.sa beside it)
+gtf = "test/fixtures/genome/genes.gtf"                # params.gtf
+gene_bed = "test/fixtures/genome/gene.bed"            # params.gene_bed
+tss_bed = "test/fixtures/genome/tss.bed"              # params.tss_bed
+chrom_sizes = "test/fixtures/genome/genome.fa.sizes"  # CUSTOM_GETCHROMSIZES output
+blacklist = ""                                        # params.blacklist — include-regions BED (complement of ENCODE
+                                                      # blacklist + chrM when keep_mito=false); empty = no -L filter
+macs_gsize = "2.7e9"                                  # params.genomes[...].macs_gsize (read-length keyed, e.g. GRCh37/38 @50bp)
+out_dir = "results"                                   # params.outdir
+raw_dir = "test/fixtures/raw"                         # input fastqs (raw/<sample>.fastq.gz for single-end)
+# Upstream default params (kept as config so CLI overrides work)
+narrow_peak = false
+broad_cutoff = 0.1
+fragment_size = 200
+fingerprint_bins = 500000
+min_trimmed_reads = 10000
+keep_dups = false
+keep_multi_map = false
+save_trimmed = false
+skip_fastqc = false
+skip_qc = false
+skip_trimming = false
+skip_plot_profile = false
+skip_plot_fingerprint = false
+skip_multiqc = false
+
+[[sample_groups]]
+name = "cohort"
+samples = ["S1", "S2"]
+
+[[rules]]
+name = "fastqc"
+input = ["{config.raw_dir}/{sample}.fastq.gz"]
+output = [
+    "{config.out_dir}/fastqc/{sample}_fastqc.html",
+    "{config.out_dir}/fastqc/zips/{sample}_fastqc.zip",
+]
+description = "FASTQC: raw read QC (upstream FASTQC, single-end)"
+shell = """
+[ ! -f {sample}.fastq.gz ] && ln -s {input[0]} {sample}.fastq.gz
+fastqc \\
+    --quiet \\
+    --threads {threads} \\
+    -o {config.out_dir}/fastqc \\
+    {sample}.fastq.gz
+mv {config.out_dir}/fastqc/{sample}_fastqc.zip {config.out_dir}/fastqc/zips/
+"""
+when = "!config.skip_fastqc && !config.skip_qc"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/fastqc:0.11.9--0"
+
+[[rules]]
+name = "trimgalore"
+input = ["{config.raw_dir}/{sample}.fastq.gz"]
+output = [
+    "{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz",
+    "{config.out_dir}/trimgalore/fastqc/{sample}_trimmed_fastqc.html",
+    "{config.out_dir}/trimgalore/fastqc/zips/{sample}_trimmed_fastqc.zip",
+    "{config.out_dir}/trimgalore/logs/{sample}.fastq.gz_trimming_report.txt",
+]
+description = "TRIMGALORE: adapter trimming + per-base QC (upstream TRIMGALORE, single-end branch)"
+shell = """
+[ ! -f {sample}.fastq.gz ] && ln -s {input[0]} {sample}.fastq.gz
+trim_galore \\
+    --fastqc \\
+    --cores 8 \\
+    --gzip \\
+    {sample}.fastq.gz
+mv {sample}_trimmed.fq.gz {config.out_dir}/trimgalore/
+mv {sample}_trimmed_fastqc.html {config.out_dir}/trimgalore/fastqc/
+mv {sample}_trimmed_fastqc.zip {config.out_dir}/trimgalore/fastqc/zips/
+mv {sample}.fastq.gz_trimming_report.txt {config.out_dir}/trimgalore/logs/
+"""
+when = "!config.skip_trimming"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "biocontainers/trim-galore:0.6.7--hdfd78af_0"
+
+[[rules]]
+name = "bwa_mem"
+input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
+description = "BWA_MEM: align with BWA-MEM and filter secondary alignments (upstream BWA_MEM, single-end)"
+shell = """
+SM=$(echo {sample} | sed 's/_T[0-9]*$//')
+bwa mem \\
+    -M \\
+    -R '@RG\\tID:{sample}\\tSM:$SM\\tPL:ILLUMINA\\tLB:{sample}\\tPU:1' \\
+    -t {threads} \\
+    {config.bwa_index} \\
+    {input[0]} \\
+    | samtools view -bhS -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
+"""
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:219b6c272b25e7e642ae3ff0bf0c5c81a5135ab4-0"
+
+[[rules]]
+name = "samtools_sort_stats"
+input = [
+    "{config.out_dir}/bwa/library/{sample}.Lb.bam",
+    "{config.reference}",
+]
+output = [
+    "{config.out_dir}/bwa/library/{sample}.Lb.sorted.bam",
+    "{config.out_dir}/bwa/library/{sample}.Lb.sorted.bam.bai",
+    "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.stats",
+    "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.flagstat",
+    "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.idxstats",
+]
+description = "BAM_SORT_STATS_SAMTOOLS: coordinate sort, index, stats, flagstat, idxstats (5 upstream processes folded; same samtools 1.17 env)"
+shell = """
+samtools sort \\
+    -@ {threads} \\
+    -o {config.out_dir}/bwa/library/{sample}.Lb.sorted.bam \\
+    -T {sample}.Lb.sorted \\
+    {config.out_dir}/bwa/library/{sample}.Lb.bam
+
+samtools \\
+    index \\
+    -@ 5 \\
+    {config.out_dir}/bwa/library/{sample}.Lb.sorted.bam
+
+samtools \\
+    stats \\
+    --threads {threads} \\
+    --reference {config.reference} \\
+    {config.out_dir}/bwa/library/{sample}.Lb.sorted.bam \\
+    > {config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.stats
+
+samtools \\
+    flagstat \\
+    --threads {threads} \\
+    {config.out_dir}/bwa/library/{sample}.Lb.sorted.bam \\
+    > {config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.flagstat
+
+samtools idxstats {config.out_dir}/bwa/library/{sample}.Lb.sorted.bam \\
+    > {config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.idxstats
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/samtools:1.17--h00cdaf9_0"
+
+[[rules]]
+name = "picard_mergesamfiles"
+input = ["{config.out_dir}/bwa/library/{sample}.Lb.sorted.bam"]
+output = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.sorted.bam"]
+description = "PICARD_MERGESAMFILES_LIBRARY: merge resequenced libraries (single-pair samples take the upstream symlink branch)"
+shell = """
+ln -s {input[0]} {output[0]}
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/picard:3.0.0--hdfd78af_1"
+
+[[rules]]
+name = "picard_markduplicates"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.sorted.bam",
+    "{config.reference}",
+    "{config.reference}.fai",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam.bai",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.mkD.sorted.MarkDuplicates.metrics.txt",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.stats",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.flagstat",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.idxstats",
+]
+description = "BAM_MARKDUPLICATES_PICARD: Picard MarkDuplicates + index + stats (upstream 4 processes folded; picard 3.0.0 + samtools 1.17 in one env)"
+shell = """
+XMX=$(( $(echo {memory} | tr -d 'G') * 1024 * 8 / 10 ))
+picard \\
+    -Xmx${XMX}M \\
+    MarkDuplicates \\
+    --ASSUME_SORTED true \\
+    --REMOVE_DUPLICATES false \\
+    --VALIDATION_STRINGENCY LENIENT \\
+    --TMP_DIR tmp \\
+    --INPUT {config.out_dir}/bwa/merged_library/{sample}.mLb.sorted.bam \\
+    --OUTPUT {config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam \\
+    --REFERENCE_SEQUENCE {config.reference} \\
+    --METRICS_FILE {config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.mkD.sorted.MarkDuplicates.metrics.txt
+
+samtools \\
+    index \\
+    -@ 5 \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam
+
+samtools \\
+    stats \\
+    --threads {threads} \\
+    --reference {config.reference} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.stats
+
+samtools \\
+    flagstat \\
+    --threads {threads} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.flagstat
+
+samtools idxstats {config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.idxstats
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+conda = "envs/picard-samtools.yaml"
+
+[[rules]]
+name = "bamtools_filter"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam.bai",
+    "assets/bamtools_filter_se.json",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats",
+]
+description = "BAM_FILTER_BAMTOOLS: filter with BAMTools + index + stats (upstream BAMTOOLS_FILTER, SAMTOOLS_INDEX, BAM_STATS_SAMTOOLS folded; single-end branch — no name sort / orphan removal)"
+shell = """
+BLACKLIST=""
+[ -n "{config.blacklist}" ] && BLACKLIST="-L {config.blacklist}"
+samtools view \\
+    -F 0x004 \\
+    -F 0x0400 \\
+    -q 1 \\
+    $BLACKLIST \\
+    -b {config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam \\
+    | bamtools filter \\
+        -out {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+        -script assets/bamtools_filter_se.json
+
+samtools \\
+    index \\
+    -@ 5 \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam
+
+samtools \\
+    stats \\
+    --threads {threads} \\
+    --reference {config.reference} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats
+
+samtools \\
+    flagstat \\
+    --threads {threads} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat
+
+samtools idxstats {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/mulled-v2-0560a8046fc82aa4338588eca29ff18edab2c5aa:5687a7da26983502d0a8a9a6b05ed727c740ddc4-0"
+
+[[rules]]
+name = "macs2_callpeak"
+input = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam"]
+output = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.gappedPeak",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.xls",
+]
+description = "MACS2_CALLPEAK: call peaks with MACS2 (broad-peak default, no control, single-end BAM)"
+shell = """
+macs2 \\
+    callpeak \\
+    --keep-dup all \\
+    --nomodel \\
+    --broad \\
+    --broad-cutoff {config.broad_cutoff} \\
+    --gsize {config.macs_gsize} \\
+    --format BAM \\
+    --name {sample}.mLb.clN \\
+    --treatment {input[0]}
+
+mv {sample}.mLb.clN_peaks.broadPeak {config.out_dir}/bwa/merged_library/macs2/broad_peak/
+mv {sample}.mLb.clN_peaks.gappedPeak {config.out_dir}/bwa/merged_library/macs2/broad_peak/
+mv {sample}.mLb.clN_peaks.xls {config.out_dir}/bwa/merged_library/macs2/broad_peak/
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3"
+
+[[rules]]
+name = "homer_annotatepeaks"
+input = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
+    "{config.reference}",
+    "{config.gtf}",
+]
+output = ["{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt"]
+description = "HOMER_ANNOTATEPEAKS: annotate peaks with HOMER"
+shell = """
+annotatePeaks.pl \\
+    {input[0]} \\
+    {config.reference} \\
+    -gid \\
+    -gtf {config.gtf} \\
+    -cpu {threads} \\
+    > {output[0]}
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/homer:4.11--pl526hc9558a2_3"
+
+[[rules]]
+name = "frip_score"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
+]
+output = ["{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/{sample}.FRiP.txt"]
+description = "FRIP_SCORE: fraction of reads in peaks (feeds the excluded MULTIQC_CUSTOM_PEAKS upstream; kept as the pipeline runs it on the default path)"
+shell = """
+READS_IN_PEAKS=$(intersectBed -a {input[0]} -b {input[1]} -bed -c -f 0.20 | awk -F '\\t' '{sum += $NF} END {print sum}')
+samtools flagstat {input[0]} > {input[0]}.flagstat
+grep 'mapped (' {input[0]}.flagstat | grep -v "primary" | awk -v a="$READS_IN_PEAKS" -v OFS='\\t' '{print "{sample}", a/$1}' > {output[0]}
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/mulled-v2-8186960447c5cb2faa697666dc1e6d919ad23f3e:3127fcae6b6bdaf8181e21a26ae61231030a9fcb-0"
+
+[[rules]]
+name = "bedtools_genomecov"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph",
+    "{config.out_dir}/bwa/merged_library/bigwig/scale/{sample}.mLb.clN.scale_factor.txt",
+]
+description = "BEDTOOLS_GENOMECOV: 1e6-read-normalised bedGraph track (single-end: -fs fragment_size, no -pc)"
+shell = """
+SCALE_FACTOR=$(grep '[0-9] mapped (' {input[1]} | awk '{print 1000000/$1}')
+echo $SCALE_FACTOR > {config.out_dir}/bwa/merged_library/bigwig/scale/{sample}.mLb.clN.scale_factor.txt
+
+bedtools \\
+    genomecov \\
+    -ibam {input[0]} \\
+    -bg \\
+    -scale $SCALE_FACTOR \\
+    -fs {config.fragment_size} \\
+> tmp.bg
+
+bedtools sort -i tmp.bg > {config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph
+"""
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/bedtools:2.30.0--hc088bd4_0"
+
+[[rules]]
+name = "ucsc_bedgraphtobigwig"
+input = [
+    "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph",
+    "{config.chrom_sizes}",
+]
+output = ["{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig"]
+description = "UCSC_BEDGRAPHTOBIGWIG: convert normalised bedGraph to bigWig"
+shell = """
+bedGraphToBigWig \\
+    {input[0]} \\
+    {config.chrom_sizes} \\
+    {output[0]}
+"""
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "biocontainers/ucsc-bedgraphtobigwig:445--h954228d_0"
+
+[[rules]]
+name = "deeptools_plots"
+input = [
+    "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig",
+    "{config.gene_bed}",
+    "{config.tss_bed}",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.computeMatrix.mat.gz",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.computeMatrix.vals.mat.tab",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.computeMatrix.mat.gz",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.computeMatrix.vals.mat.tab",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.pdf",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.tab",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.plotHeatmap.pdf",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.plotHeatmap.mat.tab",
+]
+description = "BIGWIG_PLOT_DEEPTOOLS: computeMatrix (scale-regions + reference-point), plotProfile, plotHeatmap (upstream 4 processes folded; same deeptools 3.5.1 env)"
+shell = """
+computeMatrix \\
+    scale-regions \\
+    --regionsFileName {config.gene_bed} \\
+    --scoreFileName {input[0]} \\
+    --outFileName {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.computeMatrix.mat.gz \\
+    --outFileNameMatrix {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.computeMatrix.vals.mat.tab \\
+    --numberOfProcessors {threads} \\
+    --regionBodyLength 1000 \\
+    --beforeRegionStartLength 3000 \\
+    --afterRegionStartLength 3000 \\
+    --missingDataAsZero \\
+    --skipZeros \\
+    --smartLabels
+
+computeMatrix \\
+    reference-point \\
+    --regionsFileName {config.tss_bed} \\
+    --scoreFileName {input[0]} \\
+    --outFileName {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.computeMatrix.mat.gz \\
+    --outFileNameMatrix {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.computeMatrix.vals.mat.tab \\
+    --numberOfProcessors {threads} \\
+    --missingDataAsZero \\
+    --skipZeros \\
+    --smartLabels \\
+    --upstream 3000 \\
+    --downstream 3000
+
+plotProfile \\
+    --matrixFile {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.computeMatrix.mat.gz \\
+    --outFileName {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.pdf \\
+    --outFileNameData {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.tab
+
+plotHeatmap \\
+    --matrixFile {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.computeMatrix.mat.gz \\
+    --outFileName {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.plotHeatmap.pdf \\
+    --outFileNameMatrix {config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.plotHeatmap.mat.tab
+"""
+when = "!config.skip_plot_profile"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "biocontainers/deeptools:3.5.1--py_0"
+
+[[rules]]
+name = "plotfingerprint"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.pdf",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt",
+]
+description = "MERGED_LIBRARY_DEEPTOOLS_PLOTFINGERPRINT: read coverage fingerprint (single-end: --extendReads fragment_size)"
+shell = """
+plotFingerprint \\
+    --skipZeros \\
+    --numberOfSamples {config.fingerprint_bins} \\
+    --labels {sample}.mLb.clN \\
+    --extendReads {config.fragment_size} \\
+    --bamfiles {input[0]} \\
+    --plotFile {config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.pdf \\
+    --outRawCounts {config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt \\
+    --outQualityMetrics {config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt \\
+    --numberOfProcessors {threads}
+"""
+when = "!config.skip_plot_fingerprint"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "biocontainers/deeptools:3.5.1--py_0"
+
+[[rules]]
+name = "multiqc"
+input = []
+expand_inputs = [
+    { pattern = "{config.out_dir}/fastqc/zips/{sample}_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/trimgalore/fastqc/zips/{sample}_trimmed_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/trimgalore/logs/{sample}.fastq.gz_trimming_report.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.stats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.flagstat", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.idxstats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.mkD.sorted.MarkDuplicates.metrics.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.stats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.flagstat", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.idxstats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.tab", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt", variables = { sample = "config.samples_list" } },
+]
+output = ["{config.out_dir}/multiqc/multiqc_report.html"]
+description = "MULTIQC: aggregate QC report (upstream MULTIQC local module; multiqc_config.yml staged like upstream so `multiqc -f .` auto-loads it)"
+shell = """
+ln -sf assets/multiqc_config.yml multiqc_config.yml
+multiqc \\
+    -f \\
+    .
+
+mkdir -p {config.out_dir}/multiqc
+mv multiqc_report.html {config.out_dir}/multiqc/
+mv multiqc_data {config.out_dir}/multiqc/
+[ -d multiqc_plots ] && mv multiqc_plots {config.out_dir}/multiqc/
+"""
+when = "!config.skip_multiqc"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "biocontainers/multiqc:1.13--pyhdfd78af_0"

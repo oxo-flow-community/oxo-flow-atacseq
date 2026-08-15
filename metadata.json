@@ -63,7 +63,7 @@
   ],
   "description": "ATAC-seq peak calling and QC for a cohort of single-end samples: FastQC raw-read QC, Trim Galore adapter trimming, BWA-MEM alignment, Picard mark-duplicates, BAMTools filtering, MACS2 broad-peak calling, HOMER peak annotation, FRiP scoring, normalised bigWig tracks, deepTools QC plots (profile, heatmap, fingerprint) and a combined MultiQC report.",
   "installation": {
-    "engine": "oxo-flow >= 0.11.0",
+    "engine": "oxo-flow >= 0.12.0",
     "toolchain": "containers (Docker/Singularity) — pinned images, plus one pinned conda env for picard_markduplicates",
     "requirements": [
       "reference data: genome FASTA with .fai, BWA index prefix (.amb/.ann/.bwt/.pac/.sa), chrom sizes file, GTF annotation, gene BED, TSS BED (optional blacklist BED)",

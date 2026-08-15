@@ -1,21 +1,100 @@
-# oxo-flow-atacseq — ATAC-seq peak calling and QC
+# oxo-flow-atacseq — ATAC-seq: peak calling and QC
 
 [![CI](https://github.com/oxo-flow-community/oxo-flow-atacseq/actions/workflows/ci.yml/badge.svg)](https://github.com/oxo-flow-community/oxo-flow-atacseq/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-ATAC-seq (Assay for Transposase-Accessible Chromatin) analysis pipeline:
-raw-read QC (FastQC), adapter trimming (Trim Galore), BWA-MEM alignment,
-Picard mark-duplicates, BAMTools filtering, MACS2 broad-peak calling, HOMER
-peak annotation, FRiP scoring, normalised bigWig tracks, deepTools QC plots
-and a MultiQC report. Ported to oxo-flow from nf-core/atacseq, single-end,
-BWA aligner, broad-peak default configuration.
+> ★ Verified · ⇄ Official port of [`nf-core/atacseq`](https://github.com/nf-core/atacseq) @ `2.1.2` — same tools, same versions, same commands. Part of the [oxo-flow-community catalog](https://oxo-flow-community.github.io/).
+
+ATAC-seq (Assay for Transposase-Accessible Chromatin) analysis for a
+cohort of single-end samples: raw-read QC (FastQC), adapter trimming
+(Trim Galore), BWA-MEM alignment, Picard mark-duplicates, BAMTools
+filtering, MACS2 broad-peak calling, HOMER peak annotation, FRiP scoring,
+normalised bigWig tracks, deepTools QC plots (profile, heatmap and
+fingerprint) and a single MultiQC report. Input is a directory of
+`<sample>.fastq.gz` reads plus pre-built reference files; output lands in
+`results/` with per-step subdirectories and a combined MultiQC HTML report.
+
+## Installation
+
+### 1. Install oxo-flow
+
+Requires **oxo-flow >= 0.11.0**. Recommended — prebuilt release binary:
+
+```bash
+curl -fL -o oxo-flow.tar.gz \
+  https://github.com/Traitome/oxo-flow/releases/download/v0.11.0/oxo-flow-v0.11.0-x86_64-unknown-linux-gnu.tar.gz
+tar xzf oxo-flow.tar.gz
+sudo mv oxo-flow /usr/local/bin/
+```
+
+Alternative via conda:
+
+```bash
+conda install -c bioconda oxo-flow-cli
+```
+
+Note the bioconda package may lag the latest release; other platform
+binaries are on the [releases page](https://github.com/Traitome/oxo-flow/releases).
+
+### 2. Get this workflow
+
+```bash
+git clone https://github.com/oxo-flow-community/oxo-flow-atacseq.git
+cd oxo-flow-atacseq
+```
+
+### 3. Requirements
+
+**Reference data** (pre-built files, declared under `[config]` in `main.oxoflow`):
+
+| config key | file |
+|---|---|
+| `reference` | genome FASTA (with `.fai` beside it) |
+| `bwa_index` | BWA index prefix (`<prefix>.amb/.ann/.bwt/.pac/.sa`) |
+| `chrom_sizes` | chrom sizes file (e.g. `<genome>.sizes`) |
+| `gtf` / `gene_bed` / `tss_bed` | annotation for HOMER / deepTools |
+| `blacklist` | optional include-regions BED (upstream ENCODE blacklist + chrM complement) — empty disables `-L` filtering |
+
+**Input data**: single-end `raw/<sample>.fastq.gz` reads, named in
+`[[sample_groups]]` (see `test/fixtures/` for a tiny working set).
+
+**Compute**: up to **12 CPUs / 72 GB per rule** (trimming, alignment and
+deepTools rules are the heaviest); a few rules need as little as 1 CPU / 6 GB.
+
+**Tools**: a mixed delivery — 14 of 15 rules run in **pinned Docker images**
+(`biocontainers/*` tags, e.g. `biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3`),
+executed by oxo-flow via Docker or Singularity; the remaining rule
+(`picard_markduplicates`) uses a **pinned conda env** at
+`envs/picard-samtools.yaml` (picard 3.0.0, samtools 1.17), which requires
+conda/mamba at runtime.
+
+## Usage
+
+```bash
+# 1. install oxo-flow (see Installation)
+# 2. prepare data: <raw_dir>/<sample>.fastq.gz (single-end), see fixtures/
+# 3. preview the plan
+oxo-flow dry-run main.oxoflow
+# 4. run
+oxo-flow run main.oxoflow -j 8
+# 5. run a subset
+oxo-flow run main.oxoflow -t multiqc --samples first:1
+```
+
+Sample names are declared in `[[sample_groups]]` (`S1`, `S2` in the
+fixture set) — add your own names there or point `raw_dir` at your data.
+Pipeline behaviour is tuned through `[config]`: `macs_gsize` (default
+`2.7e9`), `narrow_peak`, `broad_cutoff`, `fragment_size`,
+`min_trimmed_reads`, `out_dir`, and the `skip_*` toggles (`skip_fastqc`,
+`skip_qc`, `skip_trimming`, `skip_plot_profile`, `skip_plot_fingerprint`,
+`skip_multiqc`). All can be overridden on the CLI.
 
 ## Source
 
-Ported from **[nf-core/atacseq](https://github.com/nf-core/atacseq)**, version
-`2.1.2` (MIT). This port is maintained independently and **may lag the
-upstream** — check the version above and the fidelity table below for the
-exact ported state.
+Upstream: **[nf-core/atacseq](https://github.com/nf-core/atacseq)** @
+`2.1.2` (commit `1a1dbe52ffbd82256c941a032b0e22abbd925b8a`), MIT license.
+Created 2026-08-15; this workflow may lag behind upstream releases.
+Upstream attribution in [NOTICE.md](NOTICE.md).
 
 ## Fidelity
 
@@ -64,59 +143,17 @@ listed with reasons.
   block; the port exposes it as `config.macs_gsize` (default `2.7e9`, the
   upstream GRCh37/38 @ 50 bp value).
 
-## Quickstart
+## Test
 
 ```bash
-# 1. install oxo-flow (see Requirements)
-# 2. prepare data: <raw_dir>/<sample>.fastq.gz (single-end), see fixtures/
-# 3. preview the plan
-oxo-flow dry-run main.oxoflow
-# 4. run
-oxo-flow run main.oxoflow -j 8
-# 5. run a subset
-oxo-flow run main.oxoflow -t multiqc --samples first:1
+bash test/run.sh
 ```
 
-Sample names are declared in `[[sample_groups]]` (`S1`, `S2` in the
-fixture set) — add your own names there or point `raw_dir` at your data.
-
-## Requirements
-
-- **oxo-flow ≥ 0.11.0** — install the prebuilt binary:
-
-```bash
-curl -fL -o oxo-flow.tar.gz \
-  https://github.com/Traitome/oxo-flow/releases/download/v0.11.0/oxo-flow-v0.11.0-x86_64-unknown-linux-gnu.tar.gz
-tar xzf oxo-flow.tar.gz
-sudo mv oxo-flow /usr/local/bin/
-```
-
-- Conda users may alternatively `conda install -c bioconda oxo-flow-cli`
-  (note: the bioconda package currently lags the release binary at 0.10.2 —
-  some 0.11.0 format features may not validate).
-- Docker/Singularity/conda at runtime, per the environments declared in
-  `main.oxoflow` (`picard_markduplicates` uses `envs/picard-samtools.yaml`;
-  all other rules use the upstream container tags).
-
-## References
-
-The port expects pre-built reference files (no `prepare_genome` step):
-
-| config key | file |
-|---|---|
-| `reference` | genome FASTA (with `.fai` beside it) |
-| `bwa_index` | BWA index prefix (`<prefix>.amb/.ann/.bwt/.pac/.sa`) |
-| `chrom_sizes` | chrom sizes file (e.g. `<genome>.sizes`) |
-| `gtf` / `gene_bed` / `tss_bed` | annotation for HOMER / deepTools |
-| `blacklist` | optional include-regions BED (upstream ENCODE blacklist + chrM complement) — empty disables `-L` filtering |
-
-See `test/fixtures/` for a tiny working set.
+Runs `oxo-flow validate` + `lint` + `dry-run` (with `--samples first:1`)
+against the fixture data; a debug pass additionally asserts that no literal
+`{wildcards}` leak into expanded commands. See `test/run.sh` for details.
 
 ## License
 
-Apache-2.0. Copyright (c) 2026 oxo-flow-community. Upstream attribution in
-[NOTICE.md](NOTICE.md).
-
-## Community
-
-https://oxo-flow-community.github.io/
+Apache-2.0. Copyright (c) 2026 oxo-flow-community. Upstream
+(nf-core/atacseq) is MIT — see [NOTICE.md](NOTICE.md) and `LICENSE.upstream`.

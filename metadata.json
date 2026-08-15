@@ -1,7 +1,9 @@
 {
   "name": "oxo-flow-atacseq",
-  "title": "nf-core atacseq (port)",
-  "engine": "oxo-flow",
+  "title": "ATAC-seq: peak calling and QC",
+  "origin": "port",
+  "rating": "verified",
+  "engine": "nextflow",
   "source": {
     "repo": "nf-core/atacseq",
     "url": "https://github.com/nf-core/atacseq",
@@ -10,9 +12,8 @@
     "license": "MIT"
   },
   "created": "2026-08-15",
-  "domain": "genomics",
-  "tags": ["atac-seq", "peaks", "epigenomics", "nf-core", "chip-seq"],
-  "description": "oxo-flow port of the nf-core/atacseq pipeline (default main path): FastQC, Trim Galore trimming, BWA-MEM alignment, Picard mark-duplicates, BAMTools filtering, MACS2 broad-peak calling, HOMER peak annotation, FRiP scoring, bigWig tracks, deepTools QC plots and MultiQC report.",
+  "domain": "epigenomics",
+  "tags": ["atac-seq", "peaks", "epigenomics", "single-end", "qc"],
   "scope": [
     "FASTQC",
     "TRIMGALORE",
@@ -47,21 +48,31 @@
   ],
   "rule_count": 15,
   "tools": [
-    "fastqc@0.11.9",
-    "trim-galore@0.6.7",
-    "bwa@0.7.17",
-    "samtools@1.17",
-    "picard@3.0.0",
-    "bamtools@2.5.2",
-    "macs2@2.2.7.1",
-    "homer@4.11",
-    "bedtools@2.30.0",
-    "ucsc-bedgraphtobigwig@445",
-    "deeptools@3.5.1",
-    "multiqc@1.13"
+    "fastqc",
+    "trim-galore",
+    "bwa",
+    "samtools",
+    "picard",
+    "bamtools",
+    "macs2",
+    "homer",
+    "bedtools",
+    "ucsc-bedgraphtobigwig",
+    "deeptools",
+    "multiqc"
   ],
-  "status": "ready",
+  "description": "ATAC-seq peak calling and QC for a cohort of single-end samples: FastQC raw-read QC, Trim Galore adapter trimming, BWA-MEM alignment, Picard mark-duplicates, BAMTools filtering, MACS2 broad-peak calling, HOMER peak annotation, FRiP scoring, normalised bigWig tracks, deepTools QC plots (profile, heatmap, fingerprint) and a combined MultiQC report.",
+  "installation": {
+    "engine": "oxo-flow >= 0.11.0",
+    "toolchain": "containers (Docker/Singularity) — pinned images, plus one pinned conda env for picard_markduplicates",
+    "requirements": [
+      "reference data: genome FASTA with .fai, BWA index prefix (.amb/.ann/.bwt/.pac/.sa), chrom sizes file, GTF annotation, gene BED, TSS BED (optional blacklist BED)",
+      "input: single-end <sample>.fastq.gz reads, declared in [[sample_groups]]",
+      "compute: up to 12 CPUs / 72 GB per rule",
+      "runtime: Docker or Singularity for the 14 container rules; conda/mamba for the picard_markduplicates env"
+    ]
+  },
   "repo_url": "https://github.com/oxo-flow-community/oxo-flow-atacseq",
-  "site_page": "https://oxo-flow-community.github.io/oxo-flow-atacseq/",
+  "license": "Apache-2.0",
   "upstream_license": "MIT"
 }

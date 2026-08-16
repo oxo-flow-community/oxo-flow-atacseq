@@ -182,7 +182,7 @@ input = ["{config.out_dir}/bwa/library/{sample}.Lb.sorted.bam"]
 output = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.sorted.bam"]
 description = "PICARD_MERGESAMFILES_LIBRARY: merge resequenced libraries (single-pair samples take the upstream symlink branch)"
 shell = """
-ln -s {input[0]} {output[0]}
+ln -s "$PWD/{input[0]}" {output[0]}
 """
 
 [rules.resources]

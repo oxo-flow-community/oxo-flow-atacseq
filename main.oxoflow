@@ -116,7 +116,7 @@ bwa mem \\
     -t {threads} \\
     {config.bwa_index} \\
     {input[0]} \\
-    | samtools view -bhS -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
+    | samtools view -bh -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
 """
 
 [rules.resources]

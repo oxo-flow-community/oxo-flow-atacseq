@@ -26,6 +26,10 @@ blacklist = ""                                        # params.blacklist — inc
 macs_gsize = "2.7e9"                                  # params.genomes[...].macs_gsize (read-length keyed, e.g. GRCh37/38 @50bp)
 out_dir = "results"                                   # params.outdir
 raw_dir = "test/fixtures/raw"                         # input fastqs (raw/<sample>.fastq.gz for single-end)
+# GB passed to picard -Xmx. Previously derived from the rule's 36G
+# resource budget (Xmx≈30G), which thrash-killed the JVM on a 3.7 GB
+# machine (live run); the resource budget still drives scheduling.
+picard_xmx_gb = 8
 # Upstream default params (kept as config so CLI overrides work)
 narrow_peak = false
 broad_cutoff = 0.1
@@ -209,7 +213,7 @@ output = [
 ]
 description = "BAM_MARKDUPLICATES_PICARD: Picard MarkDuplicates + index + stats (upstream 4 processes folded; picard 3.0.0 + samtools 1.17 in one env)"
 shell = """
-XMX=$(( $(echo {memory} | tr -d 'G') * 1024 * 8 / 10 ))
+XMX=$(( {config.picard_xmx_gb} * 1024 ))
 picard \\
     -Xmx${XMX}M \\
     MarkDuplicates \\

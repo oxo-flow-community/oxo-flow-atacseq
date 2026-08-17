@@ -194,7 +194,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "quay.io/biocontainers/picard:3.0.0--hdfd78af_1"
+conda = "envs/picard-samtools.yaml"
 
 [[rules]]
 name = "picard_markduplicates"

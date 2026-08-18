@@ -26,6 +26,10 @@ blacklist = ""                                        # params.blacklist — inc
 macs_gsize = "2.7e9"                                  # params.genomes[...].macs_gsize (read-length keyed, e.g. GRCh37/38 @50bp)
 out_dir = "results"                                   # params.outdir
 raw_dir = "test/fixtures/raw"                         # input fastqs (raw/<sample>.fastq.gz for single-end)
+# GB passed to picard -Xmx. Previously derived from the rule's 36G
+# resource budget (Xmx≈30G), which thrash-killed the JVM on a 3.7 GB
+# machine (live run); the resource budget still drives scheduling.
+picard_xmx_gb = 8
 # Upstream default params (kept as config so CLI overrides work)
 narrow_peak = false
 broad_cutoff = 0.1
@@ -70,7 +74,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/fastqc:0.11.9--0"
+docker = "quay.io/biocontainers/fastqc:0.11.9--0"
 
 [[rules]]
 name = "trimgalore"
@@ -101,7 +105,7 @@ threads = 12
 memory = "72G"
 
 [rules.environment]
-docker = "biocontainers/trim-galore:0.6.7--hdfd78af_0"
+docker = "quay.io/biocontainers/trim-galore:0.6.7--hdfd78af_0"
 
 [[rules]]
 name = "bwa_mem"
@@ -116,7 +120,7 @@ bwa mem \\
     -t {threads} \\
     {config.bwa_index} \\
     {input[0]} \\
-    | samtools view -bhS -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
+    | samtools view -bh -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
 """
 
 [rules.resources]
@@ -124,7 +128,7 @@ threads = 12
 memory = "72G"
 
 [rules.environment]
-docker = "biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:219b6c272b25e7e642ae3ff0bf0c5c81a5135ab4-0"
+docker = "quay.io/biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:219b6c272b25e7e642ae3ff0bf0c5c81a5135ab4-0"
 
 [[rules]]
 name = "samtools_sort_stats"
@@ -174,7 +178,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/samtools:1.17--h00cdaf9_0"
+docker = "quay.io/biocontainers/samtools:1.17--h00cdaf9_0"
 
 [[rules]]
 name = "picard_mergesamfiles"
@@ -182,7 +186,7 @@ input = ["{config.out_dir}/bwa/library/{sample}.Lb.sorted.bam"]
 output = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.sorted.bam"]
 description = "PICARD_MERGESAMFILES_LIBRARY: merge resequenced libraries (single-pair samples take the upstream symlink branch)"
 shell = """
-ln -s {input[0]} {output[0]}
+ln -s "$PWD/{input[0]}" {output[0]}
 """
 
 [rules.resources]
@@ -190,7 +194,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/picard:3.0.0--hdfd78af_1"
+conda = "envs/picard-samtools.yaml"
 
 [[rules]]
 name = "picard_markduplicates"
@@ -209,7 +213,7 @@ output = [
 ]
 description = "BAM_MARKDUPLICATES_PICARD: Picard MarkDuplicates + index + stats (upstream 4 processes folded; picard 3.0.0 + samtools 1.17 in one env)"
 shell = """
-XMX=$(( $(echo {memory} | tr -d 'G') * 1024 * 8 / 10 ))
+XMX=$(( {config.picard_xmx_gb} * 1024 ))
 picard \\
     -Xmx${XMX}M \\
     MarkDuplicates \\
@@ -306,7 +310,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/mulled-v2-0560a8046fc82aa4338588eca29ff18edab2c5aa:5687a7da26983502d0a8a9a6b05ed727c740ddc4-0"
+docker = "quay.io/biocontainers/mulled-v2-0560a8046fc82aa4338588eca29ff18edab2c5aa:5687a7da26983502d0a8a9a6b05ed727c740ddc4-0"
 
 [[rules]]
 name = "macs2_callpeak"
@@ -339,7 +343,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3"
+docker = "quay.io/biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3"
 
 [[rules]]
 name = "homer_annotatepeaks"
@@ -365,7 +369,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/homer:4.11--pl526hc9558a2_3"
+docker = "quay.io/biocontainers/homer:4.11--pl526hc9558a2_3"
 
 [[rules]]
 name = "frip_score"
@@ -386,7 +390,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/mulled-v2-8186960447c5cb2faa697666dc1e6d919ad23f3e:3127fcae6b6bdaf8181e21a26ae61231030a9fcb-0"
+docker = "quay.io/biocontainers/mulled-v2-8186960447c5cb2faa697666dc1e6d919ad23f3e:3127fcae6b6bdaf8181e21a26ae61231030a9fcb-0"
 
 [[rules]]
 name = "bedtools_genomecov"
@@ -419,7 +423,7 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/bedtools:2.30.0--hc088bd4_0"
+docker = "quay.io/biocontainers/bedtools:2.30.0--hc088bd4_0"
 
 [[rules]]
 name = "ucsc_bedgraphtobigwig"
@@ -441,7 +445,7 @@ threads = 1
 memory = "6G"
 
 [rules.environment]
-docker = "biocontainers/ucsc-bedgraphtobigwig:445--h954228d_0"
+docker = "quay.io/biocontainers/ucsc-bedgraphtobigwig:445--h954228d_0"
 
 [[rules]]
 name = "deeptools_plots"
@@ -506,7 +510,7 @@ threads = 12
 memory = "72G"
 
 [rules.environment]
-docker = "biocontainers/deeptools:3.5.1--py_0"
+docker = "quay.io/biocontainers/deeptools:3.5.1--py_0"
 
 [[rules]]
 name = "plotfingerprint"
@@ -539,7 +543,7 @@ threads = 12
 memory = "72G"
 
 [rules.environment]
-docker = "biocontainers/deeptools:3.5.1--py_0"
+docker = "quay.io/biocontainers/deeptools:3.5.1--py_0"
 
 [[rules]]
 name = "multiqc"
@@ -585,4 +589,4 @@ threads = 6
 memory = "36G"
 
 [rules.environment]
-docker = "biocontainers/multiqc:1.13--pyhdfd78af_0"
+docker = "quay.io/biocontainers/multiqc:1.13--pyhdfd78af_0"

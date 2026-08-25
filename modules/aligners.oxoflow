@@ -13,7 +13,15 @@ description = "Alternative aligner branch of the nf-core/atacseq 2.1.2 port (gat
 
 [[rules]]
 name = "bowtie2_align"
-input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+input = [
+    "{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz",
+    "{config.bowtie2_index}.1.bt2",
+    "{config.bowtie2_index}.2.bt2",
+    "{config.bowtie2_index}.3.bt2",
+    "{config.bowtie2_index}.4.bt2",
+    "{config.bowtie2_index}.rev.1.bt2",
+    "{config.bowtie2_index}.rev.2.bt2",
+]
 output = [
     "{config.out_dir}/bwa/library/{sample}.Lb.bam",
     "{config.out_dir}/bwa/library/log/{sample}.bowtie2.log",
@@ -46,14 +54,24 @@ docker = "quay.io/biocontainers/mulled-v2-ac74a7f02cebcfcc07d8e8d1d750af9c83b4d4
 
 [[rules]]
 name = "chromap_align"
-input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+input = [
+    "{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz",
+    "{config.reference}",
+]
 output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
-description = "CHROMAP_CHROMAP: align with Chromap (upstream CHROMAP_CHROMAP; config.chromap_index = index path, config.reference = FASTA; --Tn5-shift is the ATAC-seq-specific upstream default)"
+description = "CHROMAP_CHROMAP: align with Chromap (upstream CHROMAP_CHROMAP; config.chromap_index = index file, config.reference = FASTA; --Tn5-shift is the ATAC-seq-specific upstream default)"
 # The upstream nf-core chromap module builds the index inline when it is
 # missing (`chromap -i`), then loads it via -x — reproduce that here so the
 # rule works from a bare FASTA (guarded so re-runs reuse an existing index).
+# chromap_index must DIFFER from reference: `chromap -i -o <ref>` would
+# overwrite the reference FASTA with the index (live-verified data-loss
+# hazard), so the rule refuses that configuration.
 shell = """
-[ -f {config.chromap_index}.index ] || chromap -i -r {config.reference} -o {config.chromap_index}
+if [ "{config.chromap_index}" = "{config.reference}" ]; then
+    echo "error: chromap_index must differ from reference (chromap -i overwrites -o)" >&2
+    exit 1
+fi
+[ -f {config.chromap_index} ] || chromap -i -r {config.reference} -o {config.chromap_index}
 
 chromap \\
     -l 2000 \\
@@ -83,7 +101,12 @@ docker = "quay.io/biocontainers/mulled-v2-1f09f39f20b1c4ee36581dc81cc323c70e6616
 
 [[rules]]
 name = "star_align"
-input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+input = [
+    "{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz",
+    "{config.star_index}/Genome",
+    "{config.star_index}/SA",
+    "{config.star_index}/SAindex",
+]
 output = [
     "{config.out_dir}/bwa/library/{sample}.Lb.bam",
     "{config.out_dir}/bwa/library/log/{sample}.Log.final.out",

@@ -94,6 +94,11 @@ name = "bwa_mem_pe"
 input = [
     "{config.out_dir}/trimgalore/{sample}_1_val_1.fq.gz",
     "{config.out_dir}/trimgalore/{sample}_2_val_2.fq.gz",
+    "{config.bwa_index}.amb",
+    "{config.bwa_index}.ann",
+    "{config.bwa_index}.bwt",
+    "{config.bwa_index}.pac",
+    "{config.bwa_index}.sa",
 ]
 output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
 description = "BWA_MEM: align R1/R2 with BWA-MEM and filter secondary alignments (upstream BWA_MEM, paired-end)"
@@ -322,6 +327,9 @@ multiqc \\
     .
 
 mkdir -p {config.out_dir}/multiqc
+# re-run safe: the engine re-runs this rule in place on config invalidation,
+# and mv refuses to replace the directories the previous run left behind
+rm -rf {config.out_dir}/multiqc/multiqc_data {config.out_dir}/multiqc/multiqc_plots
 mv multiqc_report.html {config.out_dir}/multiqc/
 mv multiqc_data {config.out_dir}/multiqc/
 [ -d multiqc_plots ] && mv multiqc_plots {config.out_dir}/multiqc/

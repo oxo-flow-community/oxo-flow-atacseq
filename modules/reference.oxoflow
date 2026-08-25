@@ -35,8 +35,11 @@ when = "config.prepare_reference && config.aligner == 'bwa'"
 threads = 6
 memory = "36G"
 
+# Same mulled bwa+samtools build as bwa_mem: the .amb format written by some
+# bwa 0.7.17 biocontainer builds is not readable by this one (live-verified
+# "Parse error reading *.amb" when ref::bwa_index used its own image).
 [rules.environment]
-docker = "quay.io/biocontainers/bwa:0.7.17--hed695b0_7"
+docker = "quay.io/biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:219b6c272b25e7e642ae3ff0bf0c5c81a5135ab4-0"
 
 [[rules]]
 name = "custom_getchromsizes"

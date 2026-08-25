@@ -1,0 +1,61 @@
+# Reference preparation — ports nf-core/atacseq 2.1.2 PREPARE_GENOME steps
+# that build reference files from a FASTA (config.prepare_reference = true,
+# default false). The default path expects pre-built references (README
+# "References"); when enabled, these rules generate the BWA index at
+# config.bwa_index and the chrom sizes at config.chrom_sizes from
+# config.reference. Upstream runs these with save_reference=true publishing to
+# outdir/genome/index; this port writes directly to the configured paths.
+
+[workflow]
+name = "oxo-flow-atacseq-reference"
+version = "2.1.2"
+description = "Reference preparation branch of the nf-core/atacseq 2.1.2 port (gated by config.prepare_reference)"
+
+[[rules]]
+name = "bwa_index"
+input = ["{config.reference}"]
+output = [
+    "{config.bwa_index}.amb",
+    "{config.bwa_index}.ann",
+    "{config.bwa_index}.bwt",
+    "{config.bwa_index}.pac",
+    "{config.bwa_index}.sa",
+]
+description = "BWA_INDEX: build the BWA index for config.reference at config.bwa_index (upstream BWA_INDEX)"
+shell = """
+mkdir -p $(dirname {config.bwa_index})
+bwa \\
+    index \\
+    -p {config.bwa_index} \\
+    {config.reference}
+"""
+when = "config.prepare_reference && config.aligner == 'bwa'"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/bwa:0.7.17--hed695b0_7"
+
+[[rules]]
+name = "custom_getchromsizes"
+input = ["{config.reference}"]
+output = [
+    "{config.reference}.fai",
+    "{config.chrom_sizes}",
+]
+description = "CUSTOM_GETCHROMSIZES: samtools faidx + chrom sizes from config.reference (upstream CUSTOM_GETCHROMSIZES; point config.chrom_sizes at the generated file)"
+shell = """
+samtools faidx {config.reference}
+mkdir -p $(dirname {config.chrom_sizes})
+cut -f 1,2 {config.reference}.fai > {config.chrom_sizes}
+"""
+when = "config.prepare_reference"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/samtools:1.16.1--h6899075_1"

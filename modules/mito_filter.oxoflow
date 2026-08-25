@@ -1,0 +1,43 @@
+# Mitochondrial filtering / genome blacklist — ports nf-core/atacseq 2.1.2
+# GENOME_BLACKLIST_REGIONS (config.mito_name or config.raw_blacklist set;
+# both default empty = upstream default path, no filtering).
+#
+# The rule builds the include-regions BED consumed via `-L` by
+# bamtools_filter / bamtools_filter_pe: the complement of config.raw_blacklist
+# (the raw ENCODE blacklist, as upstream) over config.chrom_sizes, optionally
+# excluding config.mito_name when config.keep_mito = false (upstream
+# params.keep_mito). The output filename derives from the chrom_sizes
+# basename, matching upstream `${sizes.simpleName}.include_regions.bed`.
+
+[workflow]
+name = "oxo-flow-atacseq-mito-filter"
+version = "2.1.2"
+description = "Mitochondrial filtering branch of the nf-core/atacseq 2.1.2 port (gated by config.mito_name / config.raw_blacklist)"
+
+[[rules]]
+name = "genome_blacklist_regions"
+input = ["{config.chrom_sizes}"]
+output = ["{config.out_dir}/genome/genome.fa.include_regions.bed"]
+description = "GENOME_BLACKLIST_REGIONS: complement of the ENCODE blacklist + optional chrM removal into the include-regions BED (upstream GENOME_BLACKLIST_REGIONS; bedtools 2.30.0)"
+shell = """
+if [ -n "{config.raw_blacklist}" ]; then
+    sortBed -i {config.raw_blacklist} -g {config.chrom_sizes} \\
+        | complementBed -i stdin -g {config.chrom_sizes} \\
+        > include_regions.tmp.bed
+else
+    awk '{print $1, 0, $2}' OFS='\\t' {config.chrom_sizes} > include_regions.tmp.bed
+fi
+if [ -n "{config.mito_name}" ] && [ "{config.keep_mito}" != "true" ]; then
+    awk -v m="{config.mito_name}" '$1 !~ m {print $0}' include_regions.tmp.bed > {output[0]}
+else
+    mv include_regions.tmp.bed {output[0]}
+fi
+"""
+when = "config.raw_blacklist != '' || config.mito_name != ''"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/bedtools:2.30.0--hc088bd4_0"

@@ -1,0 +1,115 @@
+# Alternative aligners — ports nf-core/atacseq 2.1.2 FASTQ_ALIGN_BOWTIE2,
+# FASTQ_ALIGN_CHROMAP and ALIGN_STAR (config.aligner = "bowtie2" | "chromap" |
+# "star"; default "bwa" keeps the upstream default path). Single-end only in
+# this port (config.paired = false); the paired-end branch uses bwa_mem_pe.
+# Each rule produces {sample}.Lb.bam in bwa/library/ so the shared
+# samtools_sort_stats chain downstream is unchanged (port normalisation; the
+# upstream STAR output is named {sample}.Lb.Aligned.out.bam).
+
+[workflow]
+name = "oxo-flow-atacseq-aligners"
+version = "2.1.2"
+description = "Alternative aligner branch of the nf-core/atacseq 2.1.2 port (gated by config.aligner)"
+
+[[rules]]
+name = "bowtie2_align"
+input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+output = [
+    "{config.out_dir}/bwa/library/{sample}.Lb.bam",
+    "{config.out_dir}/bwa/library/log/{sample}.bowtie2.log",
+]
+description = "BOWTIE2_ALIGN: align with Bowtie 2 (upstream BOWTIE2_ALIGN; config.bowtie2_index = index prefix, .rev.1.bt2 etc. beside it)"
+shell = """
+SM=$(echo {sample} | sed 's/_T[0-9]*$//')
+bowtie2 \\
+    -x {config.bowtie2_index} \\
+    -U {input[0]} \\
+    --threads {threads} \\
+    --rg-id {sample} \\
+    --rg SM:$SM \\
+    --rg PL:ILLUMINA \\
+    --rg LB:{sample} \\
+    --rg PU:1 \\
+    2> {config.out_dir}/bwa/library/log/{sample}.bowtie2.log \\
+    | samtools view \\
+        -bh \\
+        -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
+"""
+when = "!config.paired && config.aligner == 'bowtie2'"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-ac74a7f02cebcfcc07d8e8d1d750af9c83b4d45a:a0ffedb52808e102887f6ce600d092675bf3528a-0"
+
+[[rules]]
+name = "chromap_align"
+input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
+description = "CHROMAP_CHROMAP: align with Chromap (upstream CHROMAP_CHROMAP; config.chromap_index = index file, config.reference = FASTA; --Tn5-shift is the ATAC-seq-specific upstream default)"
+shell = """
+chromap \\
+    -l 2000 \\
+    --Tn5-shift \\
+    --low-mem \\
+    --SAM \\
+    -t {threads} \\
+    -x {config.chromap_index} \\
+    -r {config.reference} \\
+    -1 {input[0]} \\
+    -o {sample}.sam
+
+samtools view \\
+    -bh \\
+    -@ {threads} \\
+    -o {config.out_dir}/bwa/library/{sample}.Lb.bam \\
+    {sample}.sam
+"""
+when = "!config.paired && config.aligner == 'chromap'"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-1f09f39f20b1c4ee36581dc81cc323c70e661633:5b2e433ab8b3d1ef098fc944b567fd98caa23f56-0"
+
+[[rules]]
+name = "star_align"
+input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+output = [
+    "{config.out_dir}/bwa/library/{sample}.Lb.bam",
+    "{config.out_dir}/bwa/library/log/{sample}.Log.final.out",
+    "{config.out_dir}/bwa/library/log/{sample}.Log.out",
+    "{config.out_dir}/bwa/library/log/{sample}.Log.progress.out",
+]
+description = "STAR_ALIGN: align with STAR (upstream STAR_ALIGN local module; config.star_index = genome dir built by STAR_GENOMEGENERATE; output renamed to {sample}.Lb.bam to feed the shared chain — upstream file is {sample}.Lb.Aligned.out.bam)"
+shell = """
+STAR \\
+    --genomeDir {config.star_index} \\
+    --readFilesIn {input[0]} \\
+    --runThreadN {threads} \\
+    --outFileNamePrefix {sample}. \\
+    --outSAMtype BAM Unsorted \\
+    --outSAMattrRGline ID:{sample} 'SM:{sample}' \\
+    --runMode alignReads \\
+    --alignIntronMax 1 \\
+    --alignEndsType EndToEnd \\
+    --readFilesCommand zcat \\
+    --runRNGseed 0 \\
+    --outSAMattributes NH HI AS NM MD
+
+mkdir -p {config.out_dir}/bwa/library/log
+mv {sample}.Aligned.out.bam {config.out_dir}/bwa/library/{sample}.Lb.bam
+mv {sample}.Log.final.out {sample}.Log.out {sample}.Log.progress.out {config.out_dir}/bwa/library/log/
+"""
+when = "!config.paired && config.aligner == 'star'"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/star:2.6.1d--0"

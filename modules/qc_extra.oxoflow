@@ -91,7 +91,7 @@ input = ["{config.reference}.fai"]
 output = ["{config.out_dir}/genome/genome.fa.autosomes.txt"]
 description = "GET_AUTOSOMES: autosome list from the FASTA .fai (upstream GET_AUTOSOMES; output name derives from the .fai basename, here genome.fa)"
 shell = """
-get_autosomes.py \\
+scripts/get_autosomes.py \\
     {input[0]} \\
     {output[0]}
 """
@@ -182,7 +182,7 @@ description = "PLOT_MACS2_QC: MACS2 peak QC plots (upstream PLOT_MACS2_QC; scrip
 shell = """
 PEAKS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.broadPeak | sort)
 SAMPLES=$(echo "$PEAKS" | sed 's|.*/||; s/_peaks\\.broadPeak$//' | paste -sd, -)
-plot_macs2_qc.r \\
+scripts/plot_macs2_qc.r \\
     -i $(echo "$PEAKS" | paste -sd, -) \\
     -s "$SAMPLES" \\
     -o ./ \\
@@ -215,7 +215,7 @@ description = "PLOT_HOMER_ANNOTATEPEAKS: peak-annotation QC plots + MultiQC TSV 
 shell = """
 ANNOS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.annotatePeaks.txt | sort)
 SAMPLES=$(echo "$ANNOS" | sed 's|.*/||; s/_peaks\\.annotatePeaks\\.txt$//' | paste -sd, -)
-plot_homer_annotatepeaks.r \\
+scripts/plot_homer_annotatepeaks.r \\
     -i $(echo "$ANNOS" | paste -sd, -) \\
     -s "$SAMPLES" \\
     -p macs2_annotatePeaks.mLb.clN \\

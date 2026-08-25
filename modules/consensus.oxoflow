@@ -35,7 +35,7 @@ sort -k1,1 -k2,2n $PEAK_FILES \\
     | mergeBed -c 2,3,4,5,6,7,8,9 -o collapse,collapse,collapse,collapse,collapse,collapse,collapse,collapse \\
     > consensus_peaks.mLb.clN.txt
 
-macs2_merged_expand.py \\
+scripts/macs2_merged_expand.py \\
     consensus_peaks.mLb.clN.txt \\
     "$SAMPLES" \\
     consensus_peaks.mLb.clN.boolean.txt \\
@@ -46,7 +46,7 @@ awk -v FS='\\t' -v OFS='\\t' 'FNR > 1 { print $1, $2, $3, $4, "0", "+" }' consen
 echo -e "GeneID\\tChr\\tStart\\tEnd\\tStrand" > consensus_peaks.mLb.clN.saf
 awk -v FS='\\t' -v OFS='\\t' 'FNR > 1 { print $4, $1, $2, $3, "+" }' consensus_peaks.mLb.clN.boolean.txt >> consensus_peaks.mLb.clN.saf
 
-plot_peak_intersect.r \\
+scripts/plot_peak_intersect.r \\
     -i consensus_peaks.mLb.clN.boolean.intersect.txt \\
     -o consensus_peaks.mLb.clN.boolean.intersect.plot.pdf
 
@@ -144,7 +144,7 @@ shell = """
 VST=""
 [ "{config.deseq2_vst}" = "true" ] && VST="--vst TRUE"
 
-deseq2_qc.r \\
+scripts/deseq2_qc.r \\
     --count_file {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt \\
     --outdir ./ \\
     --outprefix consensus_peaks.mLb.clN \\

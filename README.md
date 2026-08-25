@@ -229,9 +229,10 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 bash test/run.sh
 ```
 
-Runs `oxo-flow validate` + `lint` + `dry-run` (with `--samples first:1`)
-against the fixture data; a debug pass additionally asserts that no literal
-`{wildcards}` leak into expanded commands. See `test/run.sh` for details.
+Runs `oxo-flow validate` + `lint` + `dry-run` (sample selection comes
+from the workflow's `[[sample_groups]]` declaration) against the fixture
+data; a debug pass additionally asserts that no literal `{wildcards}` leak
+into expanded commands. See `test/run.sh` for details.
 
 ## License
 

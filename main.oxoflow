@@ -248,8 +248,11 @@ name = "picard_mergesamfiles"
 input = ["{config.out_dir}/bwa/library/{sample}.Lb.sorted.bam"]
 output = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.sorted.bam"]
 description = "PICARD_MERGESAMFILES_LIBRARY: merge resequenced libraries (single-pair samples take the upstream symlink branch)"
+# ln -sf (not -s): the engine re-runs this rule in place when a config change
+# invalidates it, and the previous run's symlink must be replaced, not error
+# ("File exists") — upstream only ever runs on a fresh workdir, so it uses -s.
 shell = """
-ln -s "$PWD/{input[0]}" {output[0]}
+ln -sf "$PWD/{input[0]}" {output[0]}
 """
 
 [rules.resources]

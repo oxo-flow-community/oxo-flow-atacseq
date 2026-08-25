@@ -48,8 +48,13 @@ docker = "quay.io/biocontainers/mulled-v2-ac74a7f02cebcfcc07d8e8d1d750af9c83b4d4
 name = "chromap_align"
 input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
 output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
-description = "CHROMAP_CHROMAP: align with Chromap (upstream CHROMAP_CHROMAP; config.chromap_index = index file, config.reference = FASTA; --Tn5-shift is the ATAC-seq-specific upstream default)"
+description = "CHROMAP_CHROMAP: align with Chromap (upstream CHROMAP_CHROMAP; config.chromap_index = index path, config.reference = FASTA; --Tn5-shift is the ATAC-seq-specific upstream default)"
+# The upstream nf-core chromap module builds the index inline when it is
+# missing (`chromap -i`), then loads it via -x — reproduce that here so the
+# rule works from a bare FASTA (guarded so re-runs reuse an existing index).
 shell = """
+[ -f {config.chromap_index}.index ] || chromap -i -r {config.reference} -o {config.chromap_index}
+
 chromap \\
     -l 2000 \\
     --Tn5-shift \\

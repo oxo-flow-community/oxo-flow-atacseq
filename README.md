@@ -193,6 +193,10 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
   `chrom_sizes`, optional `blacklist`). `prepare_reference = true` instead
   generates the BWA index and chrom sizes from the FASTA (the fixture
   already ships them, so the rules report up-to-date there).
+- **ataqv and Picard metrics are SE-only**: both rules consume the
+  single-end filtered `mLb.clN` BAM; the paired-end variants (over the
+  `mLb.flT` orphan-removed BAM) are not ported — with `paired=true` the
+  rules are skipped even when their `skip_*` gates are off.
 - **Alternative aligners are single-end only** (`when` adds
   `!config.paired`): the paired branch is bwa-only, matching upstream's
   paired alignment options. Misconfigurations (e.g. `paired=true` with

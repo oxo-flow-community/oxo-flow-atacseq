@@ -104,8 +104,7 @@ shell = """
 PAIRED=""
 [ "{config.paired}" = "true" ] && PAIRED="-p"
 
-cd {config.out_dir}/bwa/merged_library
-BAMS=$(ls *.mLb.clN.sorted.bam | sort)
+BAMS=$(ls {config.out_dir}/bwa/merged_library/*.mLb.clN.sorted.bam | sort)
 featureCounts \\
     -F SAF \\
     -O \\

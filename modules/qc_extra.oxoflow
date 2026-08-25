@@ -45,7 +45,7 @@ docker = "quay.io/biocontainers/preseq:3.1.2--h445547b_2"
 [[rules]]
 name = "picard_collectmultiplemetrics"
 input = [
-    "{config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
     "{config.reference}",
     "{config.reference}.fai",
 ]
@@ -61,7 +61,7 @@ output = [
     "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.quality_by_cycle.pdf",
     "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.read_length_histogram.pdf",
 ]
-description = "PICARD_COLLECTMULTIPLEMETRICS: alignment/insert-size/quality metrics + PDFs on the filtered BAM (upstream MERGED_LIBRARY_PICARD_COLLECTMULTIPLEMETRICS; picard 3.0.0)"
+description = "PICARD_COLLECTMULTIPLEMETRICS: alignment/insert-size/quality metrics + PDFs on the filtered BAM (upstream MERGED_LIBRARY_PICARD_COLLECTMULTIPLEMETRICS; picard 3.0.0; SE only — the PE variant over the flT bam is not ported)"
 shell = """
 XMX=$(( {config.picard_xmx_gb} * 1024 ))
 picard \\
@@ -69,14 +69,14 @@ picard \\
     CollectMultipleMetrics \\
     --VALIDATION_STRINGENCY LENIENT \\
     --TMP_DIR tmp \\
-    --INPUT {config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam \\
+    --INPUT {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
     --OUTPUT {config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics \\
     --REFERENCE_SEQUENCE {config.reference}
 
 mkdir -p {config.out_dir}/bwa/merged_library/picard_metrics/pdf
 mv {config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.*.pdf {config.out_dir}/bwa/merged_library/picard_metrics/pdf/
 """
-when = "!config.skip_picard_metrics"
+when = "!config.paired && !config.skip_picard_metrics"
 
 [rules.resources]
 threads = 1
@@ -95,7 +95,7 @@ scripts/get_autosomes.py \\
     {input[0]} \\
     {output[0]}
 """
-when = "!config.skip_ataqv"
+when = "!config.paired && !config.skip_ataqv"
 
 [rules.resources]
 threads = 1
@@ -107,14 +107,14 @@ docker = "quay.io/biocontainers/python:3.8.3"
 [[rules]]
 name = "ataqv"
 input = [
-    "{config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam",
-    "{config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam.bai",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
     "{config.out_dir}/genome/genome.fa.autosomes.txt",
     "{config.tss_bed}",
 ]
 output = ["{config.out_dir}/bwa/merged_library/ataqv/broad_peak/{sample}.ataqv.json"]
-description = "ATAQV_ATAQV: ATAC-seq QC metrics (upstream MERGED_LIBRARY_ATAQV_ATAQV; organism 'NA', --ignore-read-groups, mitochondrial-reference-name when config.mito_name)"
+description = "ATAQV_ATAQV: ATAC-seq QC metrics (upstream MERGED_LIBRARY_ATAQV_ATAQV; organism 'NA', --ignore-read-groups, mitochondrial-reference-name when config.mito_name; SE only — the PE variant over the flT bam is not ported)"
 shell = """
 MITO=""
 [ -n "{config.mito_name}" ] && MITO="--mitochondrial-reference-name {config.mito_name}"
@@ -130,7 +130,7 @@ ataqv \\
     NA \\
     {input[0]}
 """
-when = "!config.skip_ataqv"
+when = "!config.paired && !config.skip_ataqv"
 
 [rules.resources]
 threads = 6
@@ -159,7 +159,7 @@ mkarv \\
     jsons/*
 cp -r html/* {config.out_dir}/bwa/merged_library/ataqv/broad_peak/html/
 """
-when = "!config.skip_ataqv"
+when = "!config.paired && !config.skip_ataqv"
 
 [rules.resources]
 threads = 6
@@ -181,9 +181,9 @@ output = [
 description = "PLOT_MACS2_QC: MACS2 peak QC plots (upstream PLOT_MACS2_QC; scripts/plot_macs2_qc.r copied verbatim)"
 shell = """
 PEAKS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.broadPeak | sort)
-SAMPLES=$(echo "$PEAKS" | sed 's|.*/||; s/_peaks\\.broadPeak$//' | paste -sd, -)
+SAMPLES=$(echo "$PEAKS" | sed 's|.*/||; s/_peaks\\.broadPeak$//' | sed ':a;N;$!ba;s/\n/,/g')
 scripts/plot_macs2_qc.r \\
-    -i $(echo "$PEAKS" | paste -sd, -) \\
+    -i $(echo "$PEAKS" | sed ':a;N;$!ba;s/\n/,/g') \\
     -s "$SAMPLES" \\
     -o ./ \\
     -p macs2_peak.mLb.clN
@@ -214,9 +214,9 @@ output = [
 description = "PLOT_HOMER_ANNOTATEPEAKS: peak-annotation QC plots + MultiQC TSV (upstream PLOT_HOMER_ANNOTATEPEAKS; scripts/plot_homer_annotatepeaks.r copied verbatim)"
 shell = """
 ANNOS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.annotatePeaks.txt | sort)
-SAMPLES=$(echo "$ANNOS" | sed 's|.*/||; s/_peaks\\.annotatePeaks\\.txt$//' | paste -sd, -)
+SAMPLES=$(echo "$ANNOS" | sed 's|.*/||; s/_peaks\\.annotatePeaks\\.txt$//' | sed ':a;N;$!ba;s/\n/,/g')
 scripts/plot_homer_annotatepeaks.r \\
-    -i $(echo "$ANNOS" | paste -sd, -) \\
+    -i $(echo "$ANNOS" | sed ':a;N;$!ba;s/\n/,/g') \\
     -s "$SAMPLES" \\
     -p macs2_annotatePeaks.mLb.clN \\
     -o ./

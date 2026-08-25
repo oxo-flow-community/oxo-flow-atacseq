@@ -113,7 +113,7 @@ output = [
     "{config.out_dir}/bwa/library/log/{sample}.Log.out",
     "{config.out_dir}/bwa/library/log/{sample}.Log.progress.out",
 ]
-description = "STAR_ALIGN: align with STAR (upstream STAR_ALIGN local module; config.star_index = genome dir built by STAR_GENOMEGENERATE; output renamed to {sample}.Lb.bam to feed the shared chain — upstream file is {sample}.Lb.Aligned.out.bam)"
+description = "STAR_ALIGN: align with STAR (upstream STAR_ALIGN local module; config.star_index = genome dir built by STAR_GENOMEGENERATE; output renamed to <sample>.Lb.bam to feed the shared chain — upstream file is <sample>.Lb.Aligned.out.bam)"
 shell = """
 STAR \\
     --genomeDir {config.star_index} \\

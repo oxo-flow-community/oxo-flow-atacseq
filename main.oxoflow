@@ -1,10 +1,21 @@
-# oxo-flow-atacseq — port of nf-core/atacseq v2.1.2 (default main path)
+# oxo-flow-atacseq — port of nf-core/atacseq v2.1.2
 #
-# Single-end, BWA aligner, broad-peak MACS2 (all upstream defaults).
-# Fidelity notes for every upstream process live in README.md; steps that
-# are not ported (merged-replicate analysis, consensus peaks/DESeq2, ATAQV,
-# IGV, picard metrics, preseq, R QC plots, genome preparation) are listed
-# there with reasons and in metadata.json `excluded`.
+# Default path: single-end, BWA aligner, broad-peak MACS2 (upstream
+# defaults). Gated branches (all off by default so the default plan is
+# unchanged; see README "Known divergences" and each gate):
+#   config.paired=true                  paired-end reads (PE rule set in modules/paired.oxoflow)
+#   config.aligner=bowtie2|chromap|star alternative aligners (modules/aligners.oxoflow)
+#   config.prepare_reference=true       build BWA index + chrom sizes (modules/reference.oxoflow)
+#   config.mito_name / raw_blacklist    mitochondrial filtering (modules/mito_filter.oxoflow)
+#   config.skip_consensus_peaks=false   consensus peaks/DESeq2 (modules/consensus.oxoflow)
+#   config.skip_preseq=false            preseq complexity extrapolation
+#   config.skip_picard_metrics=false    Picard CollectMultipleMetrics
+#   config.skip_ataqv=false             ATAQV + mkarv reports
+#   config.skip_peak_qc=false           MACS2/HOMER R QC plots
+#   config.multiqc_custom_peaks=true    MultiQC peak-count/FRiP TSVs
+#   config.skip_igv=false               IGV session
+# Fidelity notes for every upstream process live in README.md; items that are
+# not ported are listed there with reasons and in metadata.json `excluded`.
 
 [workflow]
 name = "oxo-flow-atacseq"
@@ -45,10 +56,61 @@ skip_trimming = false
 skip_plot_profile = false
 skip_plot_fingerprint = false
 skip_multiqc = false
+# ---------------------------------------------------------------------------
+# Gated branches (defaults keep the default plan identical to the upstream
+# default main path; toggle one key at a time to activate its branch only)
+# ---------------------------------------------------------------------------
+paired = false                # false = single-end reads (upstream default); true = paired-end
+aligner = "bwa"               # params.aligner: "bwa" (default) | "bowtie2" | "chromap" | "star" (SE only)
+prepare_reference = false     # port switch: build BWA index + chrom sizes from config.reference
+raw_blacklist = ""            # params.blacklist — raw ENCODE blacklist BED (complemented into include-regions)
+mito_name = ""                # params.mito_name, e.g. "chrM" — enables mitochondrial filtering (needs config.chrom_sizes)
+keep_mito = false             # params.keep_mito — keep mitochondrial reads when mito_name set
+bowtie2_index = ""            # params.bowtie2 — index prefix (.rev.1.bt2 etc. beside it) for aligner="bowtie2"
+chromap_index = ""            # params.chromap — index file for aligner="chromap"
+star_index = ""               # params.star — STAR genome dir (built by STAR_GENOMEGENERATE upstream) for aligner="star"
+skip_preseq = true            # params.skip_preseq (upstream default true — preseq off by default)
+skip_picard_metrics = true    # upstream default false; port ships this branch OFF (set false to enable)
+skip_ataqv = true             # upstream default false; port ships this branch OFF (set false to enable)
+skip_igv = true               # upstream default false; port ships this branch OFF (set false to enable)
+skip_consensus_peaks = true   # upstream default false; port ships this branch OFF (set false to enable)
+skip_peak_qc = true           # upstream default false; port ships the R QC plots OFF (set false to enable)
+skip_deseq2_qc = true         # upstream default false; port ships DESeq2 QC OFF (set false to enable)
+skip_peak_annotation = false  # params.skip_peak_annotation (default false — HOMER annotation on by default, as upstream)
+min_reps_consensus = 1        # params.min_reps_consensus
+deseq2_vst = true             # params.deseq2_vst
+multiqc_custom_peaks = false  # port-only switch: emit MULTIQC_CUSTOM_PEAKS peak-count/FRiP TSVs
 
 [[sample_groups]]
 name = "cohort"
 samples = ["S1", "S2"]
+
+# ---------------------------------------------------------------------------
+# Gated branch modules (all rules inside are off on the default config)
+# ---------------------------------------------------------------------------
+[[include]]
+path = "modules/paired.oxoflow"
+namespace = "pe"
+
+[[include]]
+path = "modules/aligners.oxoflow"
+namespace = "alt"
+
+[[include]]
+path = "modules/reference.oxoflow"
+namespace = "ref"
+
+[[include]]
+path = "modules/mito_filter.oxoflow"
+namespace = "mito"
+
+[[include]]
+path = "modules/consensus.oxoflow"
+namespace = "cons"
+
+[[include]]
+path = "modules/qc_extra.oxoflow"
+namespace = "qce"
 
 [[rules]]
 name = "fastqc"
@@ -67,7 +129,7 @@ fastqc \\
     {sample}.fastq.gz
 mv {config.out_dir}/fastqc/{sample}_fastqc.zip {config.out_dir}/fastqc/zips/
 """
-when = "!config.skip_fastqc && !config.skip_qc"
+when = "!config.paired && !config.skip_fastqc && !config.skip_qc"
 
 [rules.resources]
 threads = 6
@@ -98,7 +160,7 @@ mv {sample}_trimmed_fastqc.html {config.out_dir}/trimgalore/fastqc/
 mv {sample}_trimmed_fastqc.zip {config.out_dir}/trimgalore/fastqc/zips/
 mv {sample}.fastq.gz_trimming_report.txt {config.out_dir}/trimgalore/logs/
 """
-when = "!config.skip_trimming"
+when = "!config.paired && !config.skip_trimming"
 
 [rules.resources]
 threads = 12
@@ -109,7 +171,14 @@ docker = "quay.io/biocontainers/trim-galore:0.6.7--hdfd78af_0"
 
 [[rules]]
 name = "bwa_mem"
-input = ["{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz"]
+input = [
+    "{config.out_dir}/trimgalore/{sample}_trimmed.fq.gz",
+    "{config.bwa_index}.amb",
+    "{config.bwa_index}.ann",
+    "{config.bwa_index}.bwt",
+    "{config.bwa_index}.pac",
+    "{config.bwa_index}.sa",
+]
 output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
 description = "BWA_MEM: align with BWA-MEM and filter secondary alignments (upstream BWA_MEM, single-end)"
 shell = """
@@ -122,6 +191,7 @@ bwa mem \\
     {input[0]} \\
     | samtools view -bh -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
 """
+when = "!config.paired && config.aligner == 'bwa'"
 
 [rules.resources]
 threads = 12
@@ -185,8 +255,11 @@ name = "picard_mergesamfiles"
 input = ["{config.out_dir}/bwa/library/{sample}.Lb.sorted.bam"]
 output = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.sorted.bam"]
 description = "PICARD_MERGESAMFILES_LIBRARY: merge resequenced libraries (single-pair samples take the upstream symlink branch)"
+# ln -sf (not -s): the engine re-runs this rule in place when a config change
+# invalidates it, and the previous run's symlink must be replaced, not error
+# ("File exists") — upstream only ever runs on a fresh workdir, so it uses -s.
 shell = """
-ln -s "$PWD/{input[0]}" {output[0]}
+ln -sf "$PWD/{input[0]}" {output[0]}
 """
 
 [rules.resources]
@@ -272,7 +345,11 @@ output = [
 description = "BAM_FILTER_BAMTOOLS: filter with BAMTools + index + stats (upstream BAMTOOLS_FILTER, SAMTOOLS_INDEX, BAM_STATS_SAMTOOLS folded; single-end branch — no name sort / orphan removal)"
 shell = """
 BLACKLIST=""
-[ -n "{config.blacklist}" ] && BLACKLIST="-L {config.blacklist}"
+if [ -n "{config.mito_name}" ] || [ -n "{config.raw_blacklist}" ]; then
+    BLACKLIST="-L {config.out_dir}/genome/genome.fa.include_regions.bed"
+elif [ -n "{config.blacklist}" ]; then
+    BLACKLIST="-L {config.blacklist}"
+fi
 samtools view \\
     -F 0x004 \\
     -F 0x0400 \\
@@ -304,6 +381,7 @@ samtools \\
 samtools idxstats {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
     > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats
 """
+when = "!config.paired"
 
 [rules.resources]
 threads = 6
@@ -363,6 +441,7 @@ annotatePeaks.pl \\
     -cpu {threads} \\
     > {output[0]}
 """
+when = "!config.skip_peak_annotation"
 
 [rules.resources]
 threads = 6
@@ -417,6 +496,7 @@ bedtools \\
 
 bedtools sort -i tmp.bg > {config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph
 """
+when = "!config.paired"
 
 [rules.resources]
 threads = 6
@@ -536,7 +616,7 @@ plotFingerprint \\
     --outQualityMetrics {config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt \\
     --numberOfProcessors {threads}
 """
-when = "!config.skip_plot_fingerprint"
+when = "!config.paired && !config.skip_plot_fingerprint"
 
 [rules.resources]
 threads = 12
@@ -578,11 +658,14 @@ multiqc \\
     .
 
 mkdir -p {config.out_dir}/multiqc
+# re-run safe: the engine re-runs this rule in place on config invalidation,
+# and mv refuses to replace the directories the previous run left behind
+rm -rf {config.out_dir}/multiqc/multiqc_data {config.out_dir}/multiqc/multiqc_plots
 mv multiqc_report.html {config.out_dir}/multiqc/
 mv multiqc_data {config.out_dir}/multiqc/
 [ -d multiqc_plots ] && mv multiqc_plots {config.out_dir}/multiqc/
 """
-when = "!config.skip_multiqc"
+when = "!config.paired && !config.skip_multiqc"
 
 [rules.resources]
 threads = 6

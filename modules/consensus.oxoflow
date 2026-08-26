@@ -1,0 +1,180 @@
+# Consensus peaks + quantification + DESeq2 QC — ports nf-core/atacseq 2.1.2
+# BED_CONSENSUS_QUANTIFY_QC_BEDTOOLS_FEATURECOUNTS_DESEQ2 (config.skip_consensus_peaks
+# default true = off; upstream runs this branch by default — set
+# skip_consensus_peaks=false to enable, see README divergences).
+#
+# Requires >= 2 samples (upstream filters the peak channel to size > 1).
+# Peak type is broad in this port (the port's macs2_callpeak is hardcoded to
+# --broad; narrow_peak mode is not ported), so the consensus rules also use
+# broadPeak files and the broad_peak/ output layout.
+
+[workflow]
+name = "oxo-flow-atacseq-consensus"
+version = "2.1.2"
+description = "Consensus peaks / DESeq2 branch of the nf-core/atacseq 2.1.2 port (gated by config.skip_consensus_peaks)"
+
+[[rules]]
+name = "macs2_consensus"
+input = []
+expand_inputs = [
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.bed",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.saf",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.boolean.txt",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.boolean.intersect.txt",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.boolean.intersect.plot.pdf",
+]
+description = "MACS2_CONSENSUS: merge peaks across samples, expand to a boolean matrix, emit consensus BED + SAF + UpSet plot (upstream MACS2_CONSENSUS; scripts/macs2_merged_expand.py + scripts/plot_peak_intersect.r copied verbatim from nf-core/atacseq bin/)"
+shell = """
+PEAK_FILES=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.broadPeak | sort)
+SAMPLES=$(echo "$PEAK_FILES" | sed 's|.*/||; s/_peaks\\.broadPeak$//' | paste -sd, -)
+
+sort -k1,1 -k2,2n $PEAK_FILES \\
+    | mergeBed -c 2,3,4,5,6,7,8,9 -o collapse,collapse,collapse,collapse,collapse,collapse,collapse,collapse \\
+    > consensus_peaks.mLb.clN.txt
+
+scripts/macs2_merged_expand.py \\
+    consensus_peaks.mLb.clN.txt \\
+    "$SAMPLES" \\
+    consensus_peaks.mLb.clN.boolean.txt \\
+    --min_replicates {config.min_reps_consensus}
+
+awk -v FS='\\t' -v OFS='\\t' 'FNR > 1 { print $1, $2, $3, $4, "0", "+" }' consensus_peaks.mLb.clN.boolean.txt > consensus_peaks.mLb.clN.bed
+
+echo -e "GeneID\\tChr\\tStart\\tEnd\\tStrand" > consensus_peaks.mLb.clN.saf
+awk -v FS='\\t' -v OFS='\\t' 'FNR > 1 { print $4, $1, $2, $3, "+" }' consensus_peaks.mLb.clN.boolean.txt >> consensus_peaks.mLb.clN.saf
+
+scripts/plot_peak_intersect.r \\
+    -i consensus_peaks.mLb.clN.boolean.intersect.txt \\
+    -o consensus_peaks.mLb.clN.boolean.intersect.plot.pdf
+
+mkdir -p {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus
+mv consensus_peaks.mLb.clN.txt consensus_peaks.mLb.clN.boolean.txt consensus_peaks.mLb.clN.bed consensus_peaks.mLb.clN.saf consensus_peaks.mLb.clN.boolean.intersect.txt consensus_peaks.mLb.clN.boolean.intersect.plot.pdf {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/
+"""
+when = "!config.skip_consensus_peaks"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-2f48cc59b03027e31ead6d383fe1b8057785dd24:5d182f583f4696f4c4d9f3be93052811b383341f-0"
+
+[[rules]]
+name = "homer_annotatepeaks_consensus"
+input = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.bed",
+    "{config.reference}",
+    "{config.gtf}",
+]
+output = ["{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN_peaks.annotatePeaks.txt"]
+description = "HOMER_ANNOTATEPEAKS: annotate consensus peaks (upstream HOMER_ANNOTATEPEAKS on the consensus BED)"
+shell = """
+annotatePeaks.pl \\
+    {input[0]} \\
+    {config.reference} \\
+    -gid \\
+    -gtf {config.gtf} \\
+    -cpu {threads} \\
+    > {output[0]}
+"""
+when = "!config.skip_consensus_peaks && !config.skip_peak_annotation"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/homer:4.11--pl526hc9558a2_3"
+
+[[rules]]
+name = "subread_featurecounts"
+input = ["{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.saf"]
+expand_inputs = [
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt.summary",
+]
+description = "SUBREAD_FEATURECOUNTS: quantify reads over consensus SAF (-F SAF -O --fracOverlap 0.2, -p when paired, unstranded; upstream SUBREAD_FEATURECOUNTS)"
+shell = """
+PAIRED=""
+[ "{config.paired}" = "true" ] && PAIRED="-p"
+
+# cd + BARE bam names: featureCounts names its count columns after the
+# paths it is given, and full relative paths survive the downstream
+# deseq2_qc.r --sample_suffix strip ('size_factors/results/...' write
+# failure, live-verified) — upstream passes bare names. -a/-o are
+# $PWD-absolute so the cd cannot break them.
+cd {config.out_dir}/bwa/merged_library
+BAMS=$(ls *.mLb.clN.sorted.bam | sort)
+featureCounts \\
+    -F SAF \\
+    -O \\
+    --fracOverlap 0.2 \\
+    $PAIRED \\
+    -T {threads} \\
+    -a $PWD/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.saf \\
+    -s 0 \\
+    -o $PWD/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt \\
+    $BAMS
+"""
+when = "!config.skip_consensus_peaks"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/subread:2.0.1--hed695b0_0"
+
+[[rules]]
+name = "deseq2_qc"
+input = ["{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt"]
+output = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.dds.RData",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.rds",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.plots.pdf",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.pca.vals.txt",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.sample.dists.txt",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.pca.vals_mqc.tsv",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.sample.dists_mqc.tsv",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/R_sessionInfo.log",
+]
+description = "DESEQ2_QC: DESeq2 PCA + clustering QC on the featureCounts matrix (upstream DESEQ2_QC; scripts/deseq2_qc.r copied verbatim; requires >= 2 samples; the size_factors/ directory stays in the workdir — not published)"
+shell = """
+VST=""
+[ "{config.deseq2_vst}" = "true" ] && VST="--vst TRUE"
+
+scripts/deseq2_qc.r \\
+    --count_file {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt \\
+    --outdir ./ \\
+    --outprefix consensus_peaks.mLb.clN \\
+    --cores {threads} \\
+    --id_col 1 \\
+    --sample_suffix '.mLb.clN.sorted.bam' \\
+    --count_col 7 \\
+    $VST
+
+sed 's/deseq2_pca/deseq2_pca_1/g' < assets/multiqc/merged_library_deseq2_pca_header.txt > tmp.txt
+sed -i -e 's/DESeq2 /consensus_peaks DESeq2 /g' tmp.txt
+cat tmp.txt consensus_peaks.mLb.clN.pca.vals.txt > consensus_peaks.mLb.clN.pca.vals_mqc.tsv
+
+sed 's/deseq2_clustering/deseq2_clustering_1/g' < assets/multiqc/merged_library_deseq2_clustering_header.txt > tmp.txt
+sed -i -e 's/DESeq2 /consensus_peaks DESeq2 /g' tmp.txt
+cat tmp.txt consensus_peaks.mLb.clN.sample.dists.txt > consensus_peaks.mLb.clN.sample.dists_mqc.tsv
+
+mkdir -p {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2
+mv consensus_peaks.mLb.clN.dds.RData consensus_peaks.mLb.clN.rds consensus_peaks.mLb.clN.plots.pdf consensus_peaks.mLb.clN.pca.vals.txt consensus_peaks.mLb.clN.sample.dists.txt consensus_peaks.mLb.clN.pca.vals_mqc.tsv consensus_peaks.mLb.clN.sample.dists_mqc.tsv R_sessionInfo.log {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/
+"""
+when = "!config.skip_consensus_peaks && !config.skip_deseq2_qc"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-8849acf39a43cdd6c839a369a74c0adc823e2f91:ab110436faf952a33575c64dd74615a84011450b-0"

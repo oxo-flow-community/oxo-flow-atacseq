@@ -1,0 +1,344 @@
+# Paired-end branch — ports nf-core/atacseq 2.1.2 processes for paired-end
+# reads (config.paired = true): FASTQC, TRIMGALORE, BWA_MEM, BAMTOOLS_FILTER,
+# SAMTOOLS_SORT(-n) + BAM_REMOVE_ORPHANS + BAM_SORT_STATS_SAMTOOLS,
+# BEDTOOLS_GENOMECOV (-pc), DEEPTOOLS_PLOTFINGERPRINT and MULTIQC.
+#
+# Inputs are <sample>_1.fastq.gz / <sample>_2.fastq.gz in config.raw_dir.
+# Paired-end rules and the single-end rules in main.oxoflow are mutually
+# exclusive via the `config.paired` gate (default false = single-end, the
+# upstream default path). Upstream process names are in each rule description.
+
+[workflow]
+name = "oxo-flow-atacseq-paired"
+version = "2.1.2"
+description = "Paired-end branch of the nf-core/atacseq 2.1.2 port (gated by config.paired)"
+
+[[rules]]
+name = "fastqc_pe"
+input = [
+    "{config.raw_dir}/{sample}_1.fastq.gz",
+    "{config.raw_dir}/{sample}_2.fastq.gz",
+]
+output = [
+    "{config.out_dir}/fastqc/{sample}_1_fastqc.html",
+    "{config.out_dir}/fastqc/{sample}_2_fastqc.html",
+    "{config.out_dir}/fastqc/zips/{sample}_1_fastqc.zip",
+    "{config.out_dir}/fastqc/zips/{sample}_2_fastqc.zip",
+]
+description = "FASTQC: raw read QC on R1 and R2 (upstream FASTQC, paired-end)"
+shell = """
+[ ! -f {sample}_1.fastq.gz ] && ln -s {input[0]} {sample}_1.fastq.gz
+[ ! -f {sample}_2.fastq.gz ] && ln -s {input[1]} {sample}_2.fastq.gz
+fastqc \\
+    --quiet \\
+    --threads {threads} \\
+    -o {config.out_dir}/fastqc \\
+    {sample}_1.fastq.gz \\
+    {sample}_2.fastq.gz
+mkdir -p {config.out_dir}/fastqc/zips
+mv {config.out_dir}/fastqc/{sample}_1_fastqc.zip {config.out_dir}/fastqc/{sample}_2_fastqc.zip {config.out_dir}/fastqc/zips/
+"""
+when = "config.paired && !config.skip_fastqc && !config.skip_qc"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/fastqc:0.11.9--0"
+
+[[rules]]
+name = "trimgalore_pe"
+input = [
+    "{config.raw_dir}/{sample}_1.fastq.gz",
+    "{config.raw_dir}/{sample}_2.fastq.gz",
+]
+output = [
+    "{config.out_dir}/trimgalore/{sample}_1_val_1.fq.gz",
+    "{config.out_dir}/trimgalore/{sample}_2_val_2.fq.gz",
+    "{config.out_dir}/trimgalore/fastqc/{sample}_1_val_1_fastqc.html",
+    "{config.out_dir}/trimgalore/fastqc/{sample}_2_val_2_fastqc.html",
+    "{config.out_dir}/trimgalore/fastqc/zips/{sample}_1_val_1_fastqc.zip",
+    "{config.out_dir}/trimgalore/fastqc/zips/{sample}_2_val_2_fastqc.zip",
+    "{config.out_dir}/trimgalore/logs/{sample}_1.fastq.gz_trimming_report.txt",
+    "{config.out_dir}/trimgalore/logs/{sample}_2.fastq.gz_trimming_report.txt",
+]
+description = "TRIMGALORE: adapter trimming + per-base QC, paired-end (upstream TRIMGALORE, paired-end branch)"
+shell = """
+[ ! -f {sample}_1.fastq.gz ] && ln -s {input[0]} {sample}_1.fastq.gz
+[ ! -f {sample}_2.fastq.gz ] && ln -s {input[1]} {sample}_2.fastq.gz
+trim_galore \\
+    --fastqc \\
+    --cores 8 \\
+    --paired \\
+    --gzip \\
+    {sample}_1.fastq.gz \\
+    {sample}_2.fastq.gz
+mkdir -p {config.out_dir}/trimgalore/fastqc/zips {config.out_dir}/trimgalore/logs
+mv {sample}_1_val_1.fq.gz {sample}_2_val_2.fq.gz {config.out_dir}/trimgalore/
+mv {sample}_1_val_1_fastqc.html {sample}_2_val_2_fastqc.html {config.out_dir}/trimgalore/fastqc/
+mv {sample}_1_val_1_fastqc.zip {sample}_2_val_2_fastqc.zip {config.out_dir}/trimgalore/fastqc/zips/
+mv {sample}_1.fastq.gz_trimming_report.txt {sample}_2.fastq.gz_trimming_report.txt {config.out_dir}/trimgalore/logs/
+"""
+when = "config.paired && !config.skip_trimming"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/trim-galore:0.6.7--hdfd78af_0"
+
+[[rules]]
+name = "bwa_mem_pe"
+input = [
+    "{config.out_dir}/trimgalore/{sample}_1_val_1.fq.gz",
+    "{config.out_dir}/trimgalore/{sample}_2_val_2.fq.gz",
+    "{config.bwa_index}.amb",
+    "{config.bwa_index}.ann",
+    "{config.bwa_index}.bwt",
+    "{config.bwa_index}.pac",
+    "{config.bwa_index}.sa",
+]
+output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
+description = "BWA_MEM: align R1/R2 with BWA-MEM and filter secondary alignments (upstream BWA_MEM, paired-end)"
+shell = """
+SM=$(echo {sample} | sed 's/_T[0-9]*$//')
+bwa mem \\
+    -M \\
+    -R '@RG\\tID:{sample}\\tSM:$SM\\tPL:ILLUMINA\\tLB:{sample}\\tPU:1' \\
+    -t {threads} \\
+    {config.bwa_index} \\
+    {input[0]} \\
+    {input[1]} \\
+    | samtools view -bh -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
+"""
+when = "config.paired && config.aligner == 'bwa'"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:219b6c272b25e7e642ae3ff0bf0c5c81a5135ab4-0"
+
+[[rules]]
+name = "bamtools_filter_pe"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam.bai",
+    "assets/bamtools_filter_pe.json",
+]
+output = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam"]
+description = "BAMTOOLS_FILTER: filter with BAMTools, paired-end branch (upstream BAMTOOLS_FILTER; the PE post-filter steps — SAMTOOLS_SORT -n, BAM_REMOVE_ORPHANS, BAM_SORT_STATS_SAMTOOLS — run in pe_name_sort_remove_orphans)"
+shell = """
+BLACKLIST=""
+if [ -n "{config.mito_name}" ] || [ -n "{config.raw_blacklist}" ]; then
+    BLACKLIST="-L {config.out_dir}/genome/genome.fa.include_regions.bed"
+elif [ -n "{config.blacklist}" ]; then
+    BLACKLIST="-L {config.blacklist}"
+fi
+samtools view \\
+    -F 0x004 \\
+    -F 0x0008 \\
+    -f 0x001 \\
+    -F 0x0400 \\
+    -q 1 \\
+    $BLACKLIST \\
+    -b {config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam \\
+    | bamtools filter \\
+        -out {config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam \\
+        -script assets/bamtools_filter_pe.json
+"""
+when = "config.paired"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-0560a8046fc82aa4338588eca29ff18edab2c5aa:5687a7da26983502d0a8a9a6b05ed727c740ddc4-0"
+
+[[rules]]
+name = "pe_name_sort_remove_orphans"
+input = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam"]
+output = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats",
+]
+description = "BAM_FILTER_BAMTOOLS (paired-end tail): name sort + BAM_REMOVE_ORPHANS (bampe_rm_orphan.py --only_fr_pairs) + coordinate sort, index, stats (upstream SAMTOOLS_SORT -n, BAM_REMOVE_ORPHANS, BAM_SORT_STATS_SAMTOOLS folded; pysam 0.19.0 + samtools 1.15.1 mulled env)"
+shell = """
+samtools sort \\
+    -n \\
+    -@ {threads} \\
+    -o {sample}.mLb.flT.name_sorted.bam \\
+    -T {sample}.mLb.flT.name_sorted \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.flT.sorted.bam
+
+python3 scripts/bampe_rm_orphan.py \\
+    {sample}.mLb.flT.name_sorted.bam \\
+    {sample}.mLb.clN.orphan_removed.bam \\
+    --only_fr_pairs
+
+samtools sort \\
+    -@ {threads} \\
+    -o {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    -T {sample}.mLb.clN.sorted \\
+    {sample}.mLb.clN.orphan_removed.bam
+
+samtools \\
+    index \\
+    -@ 5 \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam
+
+samtools \\
+    stats \\
+    --threads {threads} \\
+    --reference {config.reference} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats
+
+samtools \\
+    flagstat \\
+    --threads {threads} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat
+
+samtools idxstats {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats
+"""
+when = "config.paired"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-57736af1eb98c01010848572c9fec9fff6ffaafd:402e865b8f6af2f3e58c6fc8d57127ff0144b2c7-0"
+
+[[rules]]
+name = "bedtools_genomecov_pe"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph",
+    "{config.out_dir}/bwa/merged_library/bigwig/scale/{sample}.mLb.clN.scale_factor.txt",
+]
+description = "BEDTOOLS_GENOMECOV: 1e6-read-normalised bedGraph track, paired-end (-pc instead of -fs; upstream BEDTOOLS_GENOMECOV)"
+shell = """
+SCALE_FACTOR=$(grep '[0-9] mapped (' {input[1]} | awk '{print 1000000/$1}')
+echo $SCALE_FACTOR > {config.out_dir}/bwa/merged_library/bigwig/scale/{sample}.mLb.clN.scale_factor.txt
+
+bedtools \\
+    genomecov \\
+    -ibam {input[0]} \\
+    -bg \\
+    -scale $SCALE_FACTOR \\
+    -pc \\
+> tmp.bg
+
+bedtools sort -i tmp.bg > {config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph
+"""
+when = "config.paired"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/bedtools:2.30.0--hc088bd4_0"
+
+[[rules]]
+name = "plotfingerprint_pe"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.pdf",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt",
+    "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt",
+]
+description = "MERGED_LIBRARY_DEEPTOOLS_PLOTFINGERPRINT: read coverage fingerprint, paired-end (no --extendReads; upstream DEEPTOOLS_PLOTFINGERPRINT)"
+shell = """
+plotFingerprint \\
+    --skipZeros \\
+    --numberOfSamples {config.fingerprint_bins} \\
+    --labels {sample}.mLb.clN \\
+    --bamfiles {input[0]} \\
+    --plotFile {config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.pdf \\
+    --outRawCounts {config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt \\
+    --outQualityMetrics {config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt \\
+    --numberOfProcessors {threads}
+"""
+when = "config.paired && !config.skip_plot_fingerprint"
+
+[rules.resources]
+threads = 12
+memory = "72G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/deeptools:3.5.1--py_0"
+
+[[rules]]
+name = "multiqc_pe"
+input = []
+expand_inputs = [
+    { pattern = "{config.out_dir}/fastqc/zips/{sample}_1_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/fastqc/zips/{sample}_2_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/trimgalore/fastqc/zips/{sample}_1_val_1_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/trimgalore/fastqc/zips/{sample}_2_val_2_fastqc.zip", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/trimgalore/logs/{sample}_1.fastq.gz_trimming_report.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/trimgalore/logs/{sample}_2.fastq.gz_trimming_report.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.stats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.flagstat", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/library/samtools_stats/{sample}.Lb.sorted.bam.idxstats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.mkD.sorted.MarkDuplicates.metrics.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.stats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.flagstat", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.mkD.sorted.bam.idxstats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.tab", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/preseq/{sample}.mLb.mkD.lc_extrap.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.alignment_summary_metrics", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/ataqv/broad_peak/{sample}.ataqv.json", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.pca.vals_mqc.tsv", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_peak.mLb.clN.summary.txt", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_annotatePeaks.mLb.clN.summary_mqc.tsv", variables = { sample = "config.samples_list" } },
+]
+output = ["{config.out_dir}/multiqc/multiqc_report.html"]
+description = "MULTIQC: aggregate QC report, paired-end run (upstream MULTIQC local module)"
+shell = """
+ln -sf assets/multiqc_config.yml multiqc_config.yml
+multiqc \\
+    -f \\
+    .
+
+mkdir -p {config.out_dir}/multiqc
+# re-run safe: the engine re-runs this rule in place on config invalidation,
+# and mv refuses to replace the directories the previous run left behind
+rm -rf {config.out_dir}/multiqc/multiqc_data {config.out_dir}/multiqc/multiqc_plots
+mv multiqc_report.html {config.out_dir}/multiqc/
+mv multiqc_data {config.out_dir}/multiqc/
+[ -d multiqc_plots ] && mv multiqc_plots {config.out_dir}/multiqc/
+"""
+when = "config.paired && !config.skip_multiqc"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/multiqc:1.13--pyhdfd78af_0"

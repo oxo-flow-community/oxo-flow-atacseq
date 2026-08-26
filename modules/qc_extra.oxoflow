@@ -1,0 +1,303 @@
+# Extra QC + IGV — ports nf-core/atacseq 2.1.2 PRESEQ_LCEXTRAP,
+# PICARD_COLLECTMULTIPLEMETRICS, ATAQV_ATAQV + ATAQV_MKARV, GET_AUTOSOMES,
+# PLOT_MACS2_QC, PLOT_HOMER_ANNOTATEPEAKS, MULTIQC_CUSTOM_PEAKS and IGV.
+#
+# Gates (all default off in main.oxoflow config, except skip_peak_annotation
+# and multiqc_custom_peaks which default false):
+#   preseq                  -> config.skip_preseq = false      (upstream default IS off)
+#   picard metrics          -> config.skip_picard_metrics = false  (upstream default is ON; port ships off)
+#   ataqv + autosomes       -> config.skip_ataqv = false       (upstream default is ON; port ships off)
+#   IGV                     -> config.skip_igv = false         (upstream default is ON; port ships off)
+#   MACS2/HOMER R QC plots  -> config.skip_peak_qc = false     (upstream default is ON; port ships off)
+#   MultiQC custom peaks    -> config.multiqc_custom_peaks = true (port-only switch; upstream always emits)
+
+[workflow]
+name = "oxo-flow-atacseq-qc-extra"
+version = "2.1.2"
+description = "Extra QC and IGV branch of the nf-core/atacseq 2.1.2 port"
+
+[[rules]]
+name = "preseq_lcextrap"
+input = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.mkD.sorted.bam"]
+output = ["{config.out_dir}/bwa/merged_library/preseq/{sample}.mLb.mkD.lc_extrap.txt"]
+description = "PRESEQ_LCEXTRAP: complexity extrapolation (upstream PRESEQ_LCEXTRAP; -pe when paired)"
+shell = """
+PE=""
+[ "{config.paired}" = "true" ] && PE="-pe"
+preseq \\
+    lc_extrap \\
+    -verbose \\
+    -bam \\
+    -seed 1 \\
+    $PE \\
+    -output {output[0]} \\
+    {input[0]}
+"""
+when = "!config.skip_preseq"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/preseq:3.1.2--h445547b_2"
+
+[[rules]]
+name = "picard_collectmultiplemetrics"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.reference}",
+    "{config.reference}.fai",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.alignment_summary_metrics",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.quality_distribution_metrics",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.base_distribution_by_cycle_metrics",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.quality_by_cycle_metrics",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.quality_distribution.pdf",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.base_distribution_by_cycle.pdf",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.quality_by_cycle.pdf",
+    "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.read_length_histogram.pdf",
+]
+description = "PICARD_COLLECTMULTIPLEMETRICS: alignment/insert-size/quality metrics + PDFs on the filtered BAM (upstream MERGED_LIBRARY_PICARD_COLLECTMULTIPLEMETRICS; picard 3.0.0; SE only — the PE variant over the flT bam is not ported)"
+shell = """
+XMX=$(( {config.picard_xmx_gb} * 1024 ))
+picard \\
+    -Xmx${XMX}M \\
+    CollectMultipleMetrics \\
+    --VALIDATION_STRINGENCY LENIENT \\
+    --TMP_DIR tmp \\
+    --INPUT {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    --OUTPUT {config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics \\
+    --REFERENCE_SEQUENCE {config.reference}
+
+mkdir -p {config.out_dir}/bwa/merged_library/picard_metrics/pdf
+mv {config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.*.pdf {config.out_dir}/bwa/merged_library/picard_metrics/pdf/
+"""
+when = "!config.paired && !config.skip_picard_metrics"
+
+[rules.resources]
+threads = 1
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/picard:3.0.0--hdfd78af_1"
+
+[[rules]]
+name = "get_autosomes"
+input = ["{config.reference}.fai"]
+output = ["{config.out_dir}/genome/genome.fa.autosomes.txt"]
+description = "GET_AUTOSOMES: autosome list from the FASTA .fai (upstream GET_AUTOSOMES; output name derives from the .fai basename, here genome.fa)"
+shell = """
+scripts/get_autosomes.py \\
+    {input[0]} \\
+    {output[0]}
+"""
+when = "!config.paired && !config.skip_ataqv"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/python:3.8.3"
+
+[[rules]]
+name = "ataqv"
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
+    "{config.out_dir}/genome/genome.fa.autosomes.txt",
+    "{config.tss_bed}",
+]
+output = ["{config.out_dir}/bwa/merged_library/ataqv/broad_peak/{sample}.ataqv.json"]
+description = "ATAQV_ATAQV: ATAC-seq QC metrics (upstream MERGED_LIBRARY_ATAQV_ATAQV; organism 'NA', --ignore-read-groups, mitochondrial-reference-name when config.mito_name; SE only — the PE variant over the flT bam is not ported)"
+shell = """
+MITO=""
+[ -n "{config.mito_name}" ] && MITO="--mitochondrial-reference-name {config.mito_name}"
+ataqv \\
+    --ignore-read-groups \\
+    $MITO \\
+    --peak-file {input[2]} \\
+    --tss-file {config.tss_bed} \\
+    --autosomal-reference-file {input[3]} \\
+    --metrics-file {config.out_dir}/bwa/merged_library/ataqv/broad_peak/{sample}.ataqv.json \\
+    --threads {threads} \\
+    --name {sample} \\
+    NA \\
+    {input[0]}
+"""
+when = "!config.paired && !config.skip_ataqv"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/ataqv:1.3.1--py310ha155cf9_1"
+
+[[rules]]
+name = "mkarv"
+input = []
+expand_inputs = [
+    { pattern = "{config.out_dir}/bwa/merged_library/ataqv/broad_peak/{sample}.ataqv.json", variables = { sample = "config.samples_list" } },
+]
+output = ["{config.out_dir}/bwa/merged_library/ataqv/broad_peak/html/index.html"]
+description = "ATAQV_MKARV: per-library ATAC-seq QC reports into an HTML index (upstream MERGED_LIBRARY_ATAQV_MKARV)"
+shell = """
+mkdir -p jsons {config.out_dir}/bwa/merged_library/ataqv/broad_peak/html
+for j in {config.out_dir}/bwa/merged_library/ataqv/broad_peak/*.ataqv.json; do
+    # absolute target: a relative target resolves against jsons/, not the
+    # workdir root (broken link -> 'metrics file not found'); -f keeps the
+    # re-run safe
+    ln -sf "$PWD/$j" jsons/
+done
+mkarv \\
+    --concurrency {threads} \\
+    --force \\
+    ./html/ \\
+    jsons/*
+cp -r html/* {config.out_dir}/bwa/merged_library/ataqv/broad_peak/html/
+"""
+when = "!config.paired && !config.skip_ataqv"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/ataqv:1.3.1--py310ha155cf9_1"
+
+[[rules]]
+name = "plot_macs2_qc"
+input = []
+expand_inputs = [
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_peak.mLb.clN.summary.txt",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_peak.mLb.clN.plots.pdf",
+]
+description = "PLOT_MACS2_QC: MACS2 peak QC plots (upstream PLOT_MACS2_QC; scripts/plot_macs2_qc.r copied verbatim)"
+shell = """
+PEAKS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.broadPeak | sort)
+SAMPLES=$(echo "$PEAKS" | sed 's|.*/||; s/_peaks\\.broadPeak$//' | sed ':a;N;$!ba;s/\\n/,/g')
+scripts/plot_macs2_qc.r \\
+    -i $(echo "$PEAKS" | sed ':a;N;$!ba;s/\\n/,/g') \\
+    -s "$SAMPLES" \\
+    -o ./ \\
+    -p macs2_peak.mLb.clN
+
+mkdir -p {config.out_dir}/bwa/merged_library/macs2/broad_peak/qc
+mv macs2_peak.mLb.clN.summary.txt macs2_peak.mLb.clN.plots.pdf {config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/
+"""
+when = "!config.skip_peak_qc && !config.skip_peak_annotation"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-ad9dd5f398966bf899ae05f8e7c54d0fb10cdfa7:05678da05b8e5a7a5130e90a9f9a6c585b965afa-0"
+
+[[rules]]
+name = "plot_homer_annotatepeaks"
+input = []
+expand_inputs = [
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_annotatePeaks.mLb.clN.summary.txt",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_annotatePeaks.mLb.clN.plots.pdf",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_annotatePeaks.mLb.clN.summary_mqc.tsv",
+]
+description = "PLOT_HOMER_ANNOTATEPEAKS: peak-annotation QC plots + MultiQC TSV (upstream PLOT_HOMER_ANNOTATEPEAKS; scripts/plot_homer_annotatepeaks.r copied verbatim)"
+shell = """
+ANNOS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.annotatePeaks.txt | sort)
+SAMPLES=$(echo "$ANNOS" | sed 's|.*/||; s/_peaks\\.annotatePeaks\\.txt$//' | sed ':a;N;$!ba;s/\\n/,/g')
+scripts/plot_homer_annotatepeaks.r \\
+    -i $(echo "$ANNOS" | sed ':a;N;$!ba;s/\\n/,/g') \\
+    -s "$SAMPLES" \\
+    -p macs2_annotatePeaks.mLb.clN \\
+    -o ./
+
+find ./ -type f -name "*summary.txt" -exec cat {} \\; | cat assets/multiqc/merged_library_peak_annotation_header.txt - > macs2_annotatePeaks.mLb.clN.summary_mqc.tsv
+
+mkdir -p {config.out_dir}/bwa/merged_library/macs2/broad_peak/qc
+mv macs2_annotatePeaks.mLb.clN.summary.txt macs2_annotatePeaks.mLb.clN.plots.pdf macs2_annotatePeaks.mLb.clN.summary_mqc.tsv {config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/
+"""
+when = "!config.skip_peak_qc && !config.skip_peak_annotation"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/mulled-v2-ad9dd5f398966bf899ae05f8e7c54d0fb10cdfa7:05678da05b8e5a7a5130e90a9f9a6c585b965afa-0"
+
+[[rules]]
+name = "multiqc_custom_peaks"
+input = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/{sample}.FRiP.txt",
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/{sample}.mLb.clN_peaks.count_mqc.tsv",
+    "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/{sample}.mLb.clN_peaks.FRiP_mqc.tsv",
+]
+description = "MULTIQC_CUSTOM_PEAKS: peak-count and FRiP custom content for MultiQC (upstream MULTIQC_CUSTOM_PEAKS; port-only switch config.multiqc_custom_peaks)"
+shell = """
+cat {input[0]} | wc -l | awk -v OFS='\\t' '{ print "{sample}", $1 }' | cat assets/multiqc/merged_library_peak_count_header.txt - > {output[0]}
+cat assets/multiqc/merged_library_frip_score_header.txt {input[1]} > {output[1]}
+"""
+when = "config.multiqc_custom_peaks"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/nf-core/ubuntu:20.04"
+
+[[rules]]
+name = "igv"
+input = []
+expand_inputs = [
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.samples_list" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.bed", variables = { sample = "config.samples_list" } },
+]
+output = [
+    "{config.out_dir}/igv/broad_peak/igv_session.xml",
+    "{config.out_dir}/igv/broad_peak/igv_files.txt",
+    "{config.out_dir}/igv/broad_peak/mLb_bigwig.igv.txt",
+    "{config.out_dir}/igv/broad_peak/mLb_peaks.igv.txt",
+    "{config.out_dir}/igv/broad_peak/mLb_bed.igv.txt",
+]
+description = "IGV: IGV session file over bigWigs, peaks and the consensus BED (upstream IGV; scripts/igv_files_to_session.py copied verbatim; no merged-replicate sets in this port, so the mLb_* tracks only)"
+shell = """
+RUNDIR=$PWD
+mkdir -p {config.out_dir}/igv/broad_peak
+cd {config.out_dir}
+
+find bwa/merged_library/bigwig -name "*.bigWig" -exec echo -e "{}\\t0,0,178" \\; > igv/broad_peak/mLb_bigwig.igv.txt
+find bwa/merged_library/macs2/broad_peak -maxdepth 1 -name "*Peak" -exec echo -e "{}\\t0,0,178" \\; > igv/broad_peak/mLb_peaks.igv.txt
+find bwa/merged_library/macs2/broad_peak/consensus -maxdepth 1 -name "*.bed" -exec echo -e "{}\\t0,0,0" \\; > igv/broad_peak/mLb_bed.igv.txt
+cat igv/broad_peak/*.igv.txt > igv/broad_peak/igv_files.txt
+
+GENOME_REL=$(python3 -c "import os; print(os.path.relpath('{config.reference}', '{config.out_dir}/igv/broad_peak'))")
+python3 $RUNDIR/scripts/igv_files_to_session.py \\
+    igv/broad_peak/igv_session.xml \\
+    igv/broad_peak/igv_files.txt \\
+    "$GENOME_REL" \\
+    --path_prefix '../../'
+"""
+when = "!config.skip_igv"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/python:3.8.3"

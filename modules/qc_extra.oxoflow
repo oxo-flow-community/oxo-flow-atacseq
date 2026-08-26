@@ -150,7 +150,10 @@ description = "ATAQV_MKARV: per-library ATAC-seq QC reports into an HTML index (
 shell = """
 mkdir -p jsons {config.out_dir}/bwa/merged_library/ataqv/broad_peak/html
 for j in {config.out_dir}/bwa/merged_library/ataqv/broad_peak/*.ataqv.json; do
-    [ -f "$(basename "$j")" ] || ln -s "$j" jsons/
+    # absolute target: a relative target resolves against jsons/, not the
+    # workdir root (broken link -> 'metrics file not found'); -f keeps the
+    # re-run safe
+    ln -sf "$PWD/$j" jsons/
 done
 mkarv \\
     --concurrency {threads} \\
@@ -181,9 +184,9 @@ output = [
 description = "PLOT_MACS2_QC: MACS2 peak QC plots (upstream PLOT_MACS2_QC; scripts/plot_macs2_qc.r copied verbatim)"
 shell = """
 PEAKS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.broadPeak | sort)
-SAMPLES=$(echo "$PEAKS" | sed 's|.*/||; s/_peaks\\.broadPeak$//' | sed ':a;N;$!ba;s/\n/,/g')
+SAMPLES=$(echo "$PEAKS" | sed 's|.*/||; s/_peaks\\.broadPeak$//' | sed ':a;N;$!ba;s/\\n/,/g')
 scripts/plot_macs2_qc.r \\
-    -i $(echo "$PEAKS" | sed ':a;N;$!ba;s/\n/,/g') \\
+    -i $(echo "$PEAKS" | sed ':a;N;$!ba;s/\\n/,/g') \\
     -s "$SAMPLES" \\
     -o ./ \\
     -p macs2_peak.mLb.clN
@@ -214,9 +217,9 @@ output = [
 description = "PLOT_HOMER_ANNOTATEPEAKS: peak-annotation QC plots + MultiQC TSV (upstream PLOT_HOMER_ANNOTATEPEAKS; scripts/plot_homer_annotatepeaks.r copied verbatim)"
 shell = """
 ANNOS=$(ls {config.out_dir}/bwa/merged_library/macs2/broad_peak/*.mLb.clN_peaks.annotatePeaks.txt | sort)
-SAMPLES=$(echo "$ANNOS" | sed 's|.*/||; s/_peaks\\.annotatePeaks\\.txt$//' | sed ':a;N;$!ba;s/\n/,/g')
+SAMPLES=$(echo "$ANNOS" | sed 's|.*/||; s/_peaks\\.annotatePeaks\\.txt$//' | sed ':a;N;$!ba;s/\\n/,/g')
 scripts/plot_homer_annotatepeaks.r \\
-    -i $(echo "$ANNOS" | sed ':a;N;$!ba;s/\n/,/g') \\
+    -i $(echo "$ANNOS" | sed ':a;N;$!ba;s/\\n/,/g') \\
     -s "$SAMPLES" \\
     -p macs2_annotatePeaks.mLb.clN \\
     -o ./

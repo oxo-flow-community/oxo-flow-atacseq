@@ -51,11 +51,9 @@ input = [
 ]
 output = [
     "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.alignment_summary_metrics",
-    "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.insert_size_metrics",
     "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.quality_distribution_metrics",
     "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.base_distribution_by_cycle_metrics",
     "{config.out_dir}/bwa/merged_library/picard_metrics/{sample}.mLb.clN.CollectMultipleMetrics.quality_by_cycle_metrics",
-    "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.insert_size_histogram.pdf",
     "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.quality_distribution.pdf",
     "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.base_distribution_by_cycle.pdf",
     "{config.out_dir}/bwa/merged_library/picard_metrics/pdf/{sample}.mLb.clN.CollectMultipleMetrics.quality_by_cycle.pdf",

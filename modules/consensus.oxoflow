@@ -104,16 +104,22 @@ shell = """
 PAIRED=""
 [ "{config.paired}" = "true" ] && PAIRED="-p"
 
-BAMS=$(ls {config.out_dir}/bwa/merged_library/*.mLb.clN.sorted.bam | sort)
+# cd + BARE bam names: featureCounts names its count columns after the
+# paths it is given, and full relative paths survive the downstream
+# deseq2_qc.r --sample_suffix strip ('size_factors/results/...' write
+# failure, live-verified) — upstream passes bare names. -a/-o are
+# $PWD-absolute so the cd cannot break them.
+cd {config.out_dir}/bwa/merged_library
+BAMS=$(ls *.mLb.clN.sorted.bam | sort)
 featureCounts \\
     -F SAF \\
     -O \\
     --fracOverlap 0.2 \\
     $PAIRED \\
     -T {threads} \\
-    -a {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.saf \\
+    -a $PWD/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.saf \\
     -s 0 \\
-    -o {config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt \\
+    -o $PWD/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.featureCounts.txt \\
     $BAMS
 """
 when = "!config.skip_consensus_peaks"

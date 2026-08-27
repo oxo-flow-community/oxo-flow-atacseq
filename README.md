@@ -73,12 +73,12 @@ paired-end branch (`config.paired=true`) reads
 **Compute**: up to **12 CPUs / 72 GB per rule** (trimming, alignment and
 deepTools rules are the heaviest); a few rules need as little as 1 CPU / 6 GB.
 
-**Tools**: a mixed delivery — 41 of 42 rules run in **pinned Docker images**
+**Tools**: a mixed delivery — 40 of 42 rules run in **pinned Docker images**
 (`biocontainers/*` tags, e.g. `biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3`),
-executed by oxo-flow via Docker or Singularity; the remaining rule
-(`picard_markduplicates`) uses a **pinned conda env** at
-`envs/picard-samtools.yaml` (picard 3.0.0, samtools 1.17), which requires
-conda/mamba at runtime.
+executed by oxo-flow via Docker or Singularity; the remaining two rules
+(`picard_mergesamfiles` and `picard_markduplicates`) share one **pinned
+conda env** at `envs/picard-samtools.yaml` (picard 3.0.0, samtools 1.17),
+which requires conda/mamba at runtime.
 
 ## Usage
 
@@ -174,7 +174,7 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 | MACS2_CONSENSUS_PEAKS | `cons::macs2_consensus` | mulled (macs2 + bedtools + R) | `sort + mergeBed -c 2,3,4,5,6,7,8,9 -o collapse...` → `macs2_merged_expand.py --min_replicates` → BED/SAF/UpSet plot (bin scripts verbatim); when `skip_consensus_peaks = false`, needs ≥ 2 samples |
 | SUBREAD_FEATURECOUNTS | `cons::subread_featurecounts` | subread 2.0.1 | identical (`-F SAF -O --fracOverlap 0.2 -s 0`, `-p` when paired); when `skip_consensus_peaks = false` |
 | DESEQ2_QC | `cons::deseq2_qc` | mulled (R + DESeq2) | `deseq2_qc.r` verbatim (`--id_col 1 --count_col 7`, `--vst TRUE` when `deseq2_vst`); when `skip_consensus_peaks = false` and `skip_deseq2_qc = false` |
-| SAMTOOLS_MERGE / BAM_MERGED_REPLICATE_PICARD / BAM_FILTER_MERGED_REPLICATE / BAM_MERGE_REPLICATES_AND_PEAKS_BEDTOOLS | — | — | **not ported** — merged-replicate analysis is a structural Nextflow pattern: `groupTuple(by: [0])` folds per-replicate BAMs keyed `_REP\d+` into sets, then the merged set drives replicate-level filtering/peaks/QC. oxo-flow has no replicate-grouping primitive over globbed inputs, so the `_REP` merge (and the replicate tracks in IGV/FRiP) cannot be expressed |
+| PICARD_MERGESAMFILES / BAM_MARKDUPLICATES_PICARD / BAM_BEDGRAPH_BIGWIG_BEDTOOLS_UCSC / BAM_PEAKS_CALL_QC_ANNOTATE_MACS2_HOMER / BED_CONSENSUS_QUANTIFY_QC_BEDTOOLS_FEATURECOUNTS_DESEQ2 (aliased `MERGED_REPLICATE_*`) | — | — | **not ported** — merged-replicate analysis (`skip_merge_replicates`, default false) is a structural Nextflow pattern: `groupTuple()` folds per-replicate BAMs by base id (`meta.id - ~/_REP\d+$/`), keeping only groups with ≥ 2 replicates, then the merged BAM drives replicate-level markdup, bigWig, MACS2/HOMER and consensus/DESeq2. oxo-flow has no replicate-grouping primitive (rule inputs are static per wildcard combo; glob inputs form no DAG edges), so the `_REP` merge and replicate-level tracks cannot be expressed faithfully |
 | INPUT_CHECK (samplesheet_check) | — | — | **not ported** — pipeline plumbing; oxo-flow provides native `[[sample_groups]]` declaration + `validate` |
 | DUMP_SOFTWARE_VERSIONS | — | — | **not ported** — pipeline plumbing; oxo-flow has native version/audit mechanisms |
 

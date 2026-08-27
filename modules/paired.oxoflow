@@ -221,6 +221,15 @@ docker = "quay.io/biocontainers/mulled-v2-57736af1eb98c01010848572c9fec9fff6ffaa
 
 [[rules]]
 name = "bedtools_genomecov_pe"
+# One instance per BAM present (per-replicate and merged-replicate);
+# the per-sample flagstat is the trailing declared input — on input_groups
+# engines the group file (the same BAM) leads {input}, so {input[0]} is
+# the BAM and the flagstat is the last entry either way; on engines
+# without input_groups support the declared inputs run the per-sample
+# chain unchanged.
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
     "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat",
@@ -231,7 +240,7 @@ output = [
 ]
 description = "BEDTOOLS_GENOMECOV: 1e6-read-normalised bedGraph track, paired-end (-pc instead of -fs; upstream BEDTOOLS_GENOMECOV)"
 shell = """
-SCALE_FACTOR=$(grep '[0-9] mapped (' {input[1]} | awk '{print 1000000/$1}')
+SCALE_FACTOR=$(grep '[0-9] mapped (' $(printf '%s\\n' {input} | tail -1) | awk '{print 1000000/$1}')
 echo $SCALE_FACTOR > {config.out_dir}/bwa/merged_library/bigwig/scale/{sample}.mLb.clN.scale_factor.txt
 
 bedtools \\
@@ -255,6 +264,13 @@ docker = "quay.io/biocontainers/bedtools:2.30.0--hc088bd4_0"
 
 [[rules]]
 name = "plotfingerprint_pe"
+# One instance per BAM present (per-replicate and merged-replicate);
+# the BAM is also declared so engines without input_groups support run
+# the per-sample chain unchanged ({input[0]} either way; the .bai rides
+# along for the DAG edge).
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
@@ -317,6 +333,17 @@ expand_inputs = [
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/deseq2/consensus_peaks.mLb.clN.pca.vals_mqc.tsv", variables = { sample = "config.samples_list" } },
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_peak.mLb.clN.summary.txt", variables = { sample = "config.samples_list" } },
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/macs2_annotatePeaks.mLb.clN.summary_mqc.tsv", variables = { sample = "config.samples_list" } },
+    # merged-replicate files (config.merged_samples; empty = no-op) — see
+    # the single-end multiqc rule for the rationale.
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.tab", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt", variables = { sample = "config.merged_samples" } },
 ]
 output = ["{config.out_dir}/multiqc/multiqc_report.html"]
 description = "MULTIQC: aggregate QC report, paired-end run (upstream MULTIQC local module)"

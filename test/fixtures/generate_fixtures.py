@@ -55,11 +55,17 @@ ZONE_LEN = 400
 ZONE_STRIDE = 1300  # zone start distance
 ZONE_OFFSET = 500
 
-# sample -> per-zone read yield: high/low/extra-noise (odd/even zones)
+# sample -> per-zone read yield: high/low/extra-noise (odd/even zones).
+# Replicate samples (S1_REP1/S1_REP2/S2_REP1/S2_REP2) share their base
+# sample's profile, so merging replicates recovers the base's peak
+# structure for the merged-replicate E2E.
 WEIGHTS = {
     "S1": {"high": 100, "low": 30, "noise": 15},
     "S2": {"high": 100, "low": 30, "noise": 15},
 }
+# S1/S2 first (byte-identity with earlier fixture generations preserved);
+# the _REP samples are separate read sets seeded per name.
+SAMPLES = ["S1", "S1_REP1", "S1_REP2", "S2", "S2_REP1", "S2_REP2"]
 CHRM_READS = 800
 # duplicates: pool 150 unique reads, add copies at these multiplicities
 DUP_MULTS = [2] * 60 + [4] * 40 + [8] * 30 + [16] * 20
@@ -140,13 +146,17 @@ def main() -> int:
     def read_from(contig: str, start: int) -> str:
         return seqs[contig][start : start + READ_LEN]
 
-    for sample, weights in WEIGHTS.items():
+    for sample in SAMPLES:
+        base = sample.split("_REP")[0]
+        weights = WEIGHTS[base]
+        # Seeded per sample NAME: S1/S2 reproduce their exact prior reads,
+        # each replicate gets its own distinct read set.
         rng2 = random.Random(SEED ^ hash(sample))
         reads = []
         for contig in ("chr1", "chr2"):
             zs = zones(contig)
             for idx, (start, end) in enumerate(zs):
-                is_high = (idx % 2 == 0) if sample == "S1" else (idx % 2 == 1)
+                is_high = (idx % 2 == 0) if base == "S1" else (idx % 2 == 1)
                 n = (weights["high"] if is_high else weights["low"]) + rng2.randrange(
                     weights["noise"] + 1
                 )

@@ -73,12 +73,12 @@ paired-end branch (`config.paired=true`) reads
 **Compute**: up to **12 CPUs / 72 GB per rule** (trimming, alignment and
 deepTools rules are the heaviest); a few rules need as little as 1 CPU / 6 GB.
 
-**Tools**: a mixed delivery — 40 of 42 rules run in **pinned Docker images**
+**Tools**: a mixed delivery — 40 of 43 rules run in **pinned Docker images**
 (`biocontainers/*` tags, e.g. `biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3`),
-executed by oxo-flow via Docker or Singularity; the remaining two rules
-(`picard_mergesamfiles` and `picard_markduplicates`) share one **pinned
-conda env** at `envs/picard-samtools.yaml` (picard 3.0.0, samtools 1.17),
-which requires conda/mamba at runtime.
+executed by oxo-flow via Docker or Singularity; the remaining three rules
+(`picard_mergesamfiles`, `picard_markduplicates`, `merge_replicates`) share
+one **pinned conda env** at `envs/picard-samtools.yaml` (picard 3.0.0,
+samtools 1.17), which requires conda/mamba at runtime.
 
 ## Usage
 
@@ -174,7 +174,7 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 | MACS2_CONSENSUS_PEAKS | `cons::macs2_consensus` | mulled (macs2 + bedtools + R) | `sort + mergeBed -c 2,3,4,5,6,7,8,9 -o collapse...` → `macs2_merged_expand.py --min_replicates` → BED/SAF/UpSet plot (bin scripts verbatim); when `skip_consensus_peaks = false`, needs ≥ 2 samples |
 | SUBREAD_FEATURECOUNTS | `cons::subread_featurecounts` | subread 2.0.1 | identical (`-F SAF -O --fracOverlap 0.2 -s 0`, `-p` when paired); when `skip_consensus_peaks = false` |
 | DESEQ2_QC | `cons::deseq2_qc` | mulled (R + DESeq2) | `deseq2_qc.r` verbatim (`--id_col 1 --count_col 7`, `--vst TRUE` when `deseq2_vst`); when `skip_consensus_peaks = false` and `skip_deseq2_qc = false` |
-| PICARD_MERGESAMFILES / BAM_MARKDUPLICATES_PICARD / BAM_BEDGRAPH_BIGWIG_BEDTOOLS_UCSC / BAM_PEAKS_CALL_QC_ANNOTATE_MACS2_HOMER / BED_CONSENSUS_QUANTIFY_QC_BEDTOOLS_FEATURECOUNTS_DESEQ2 (aliased `MERGED_REPLICATE_*`) | — | — | **not ported** — merged-replicate analysis (`skip_merge_replicates`, default false) is a structural Nextflow pattern: `groupTuple()` folds per-replicate BAMs by base id (`meta.id - ~/_REP\d+$/`), keeping only groups with ≥ 2 replicates, then the merged BAM drives replicate-level markdup, bigWig, MACS2/HOMER and consensus/DESeq2. oxo-flow has no replicate-grouping primitive (rule inputs are static per wildcard combo; glob inputs form no DAG edges), so the `_REP` merge and replicate-level tracks cannot be expressed faithfully |
+| PICARD_MERGESAMFILES / BAM_MARKDUPLICATES_PICARD / BAM_BEDGRAPH_BIGWIG_BEDTOOLS_UCSC / BAM_PEAKS_CALL_QC_ANNOTATE_MACS2_HOMER / BED_CONSENSUS_QUANTIFY_QC_BEDTOOLS_FEATURECOUNTS_DESEQ2 (aliased `MERGED_REPLICATE_*`) | `merge_replicates` + the same downstream rules | picard 3.0.0, samtools 1.17, macs2 2.2.7.1, homer 4.11, bedtools 2.30.0, deepTools 3.5.1 | **ported** via oxo-flow `input_groups`: `merge_replicates` folds per-replicate BAMs by base id (`_REP\d+$` suffix) and writes the merged BAM to the canonical `{sample}.mLb.clN.sorted.bam` path; the regular chain then runs on merged AND per-replicate inputs (same commands as upstream). when `skip_merge_replicates = false` (default); see "Merged-replicate analysis" below for semantics and deviations |
 | INPUT_CHECK (samplesheet_check) | — | — | **not ported** — pipeline plumbing; oxo-flow provides native `[[sample_groups]]` declaration + `validate` |
 | DUMP_SOFTWARE_VERSIONS | — | — | **not ported** — pipeline plumbing; oxo-flow has native version/audit mechanisms |
 
@@ -215,8 +215,12 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 - **`macs_gsize`**: upstream derives it from the read length keyed genome
   block; the port exposes it as `config.macs_gsize` (default `2.7e9`, the
   upstream GRCh37/38 @ 50 bp value).
-- **IGV tracks are per-library (`mLb_*`) only**: upstream additionally
-  emits merged-replicate tracks; replicate merging is not ported (above).
+- **IGV session lists one merged `mLb_*` track set**: upstream separates
+  per-replicate and merged-replicate bigWigs/peaks into two IGV track sets
+  (`mLb_*` vs `mLb_clN_*`); this port's `igv` rule scans
+  `merged_library/{bigwig,macs2/broad_peak}` once, so merged and
+  per-replicate files land in the same set (the merged files are included
+  when `config.merged_samples` names them).
 - **featureCounts is unstranded**: `-s 0` is passed explicitly (the
   upstream default); a `[SCI-FEATURECOUNTS-STRAND]` preflight hint may
   appear for the gated rule — informational.
@@ -226,6 +230,86 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 - **Consensus branch needs ≥ 2 samples**: upstream filters the peak
   channel to `size() > 1`; with one sample the consensus rules would
   produce degenerate output.
+
+## Merged-replicate analysis
+
+Upstream's `MERGED_REPLICATE_*` branch (default ON) folds per-replicate
+libraries into one merged BAM per sample and drives the whole downstream
+chain (markdup-free: the merged BAM is NOT re-marked; bigWig, MACS2/HOMER,
+consensus/DESeq2) from it. This port implements the same analysis with
+oxo-flow's `input_groups` primitive — a declared pattern plus `group_by`
+that folds matching files the same way `groupTuple()` does.
+
+**How to use it** — declare replicate samples with the upstream `_REP\d+`
+suffix convention (`S1_REP1`, `S1_REP2`, …) in your samplesheet, then pass
+the base names of the replicate groups through `merged_samples` so the
+MultiQC/IGV aggregation rules wait for the merged files:
+
+```bash
+# samples_replicates.csv: name,samples rows — one group per sample is fine
+#   cohort,S1_REP1
+#   cohort,S1_REP2
+#   cohort,S2_REP1
+#   cohort,S2_REP2
+oxo-flow run main.oxoflow -j 4 \
+    --samples @test/fixtures/samples_replicates.csv \
+    --arg merged_samples=S1,S2
+```
+
+The merge is gated by `skip_merge_replicates` (default `false` = ON,
+matching upstream) AND a non-empty `merged_samples` — both are needed for
+the merged chain to run, so a plain samplesheet with the default config
+never instantiates it. With no `_REP\d+` samples the `merge_replicates`
+rule instantiates nothing and the default plan is untouched.
+
+**Engine requirements**: the merged-replicate mode uses the
+`input_groups` primitive (Traitome/oxo-flow#231, unreleased at time of
+writing). On released engines the gate is inert — the default path runs
+unchanged (the downstream rules fall back to their declared per-sample
+inputs), and a replicate run fails fast with a clear message instead of
+misbehaving.
+
+**What happens**: `merge_replicates` folds the per-replicate filtered BAMs
+(`{sample}_REP{rep}.mLb.clN.sorted.bam`) by base id and writes the merged
+BAM + index + samtools stats to the canonical
+`results/bwa/merged_library/{sample}.mLb.clN.sorted.bam` path — the same
+location the per-sample chain writes — so the regular chain's rules
+(`macs2_callpeak`, `homer_annotatepeaks`, `frip_score`,
+`bedtools_genomecov`, `ucsc_bedgraphtobigwig`, `deeptools_plots`,
+`plotfingerprint`, `multiqc_custom_peaks`, and the PE equivalents) run on
+the merged BAM with their identical commands, exactly like upstream's
+`MERGED_REPLICATE_CALL_ANNOTATE_PEAKS` / `..._BAM_BEDGRAPH_BIGWIG` /
+`..._PLOT_DEEPTOOLS` chain. `multiqc`/`igv` aggregate both the
+per-replicate and the merged files (upstream does the same; see the
+MultiQC/IGV divergences).
+
+**Deviations from upstream** (all documented, none change the default
+non-merge path):
+
+- **No re-markdup on the merged BAM**: upstream's
+  `MERGED_REPLICATE_MARKDUPLICATES_PICARD` re-runs MarkDuplicates with
+  `--REMOVE_DUPLICATES true` on the merged BAM. Here the merged BAM keeps
+  the per-replicate markdup state (`mLb.clN`, `--REMOVE_DUPLICATES false`),
+  matching the port's single-library handling.
+- **Single-replicate groups are merged too**: upstream keeps only groups
+  with ≥ 2 replicates (`groupTuple()` `size() > 1`); `input_groups`
+  instantiates every group it finds, so a lone `S1_REP1` still produces a
+  merged `S1` BAM (MergeSamFiles handles a single input fine). Declare
+  `_REP\d+` names only when you intend the merge.
+- **Merged naming uses the library suffix (`mLb`), not `mRp`**: upstream
+  names merged-replicate files `{id}.mRp.clN.sorted.bam`; here the merged
+  BAM reuses the canonical `{sample}.mLb.clN.sorted.bam` name, which is
+  what lets the regular chain consume it unchanged.
+- **One consensus analysis**: upstream runs the consensus/DESeq2 chain
+  twice (per-replicate and merged-replicate peak sets). Here the
+  glob-based `cons::*` rules aggregate per-replicate AND merged peaks in a
+  single run — two sample sets in one consensus matrix instead of two
+  separate analyses.
+- **Do not mix a plain sample with its replicate base**: declaring both
+  `S1` and `S1_REP1` makes `bamtools_filter` and `merge_replicates` write
+  the same `S1.mLb.clN.sorted.bam` — a declared-sample conflict (the
+  duplicate would be caught at validation). Use `_REP` names OR the plain
+  name for one sample, never both.
 
 ## Test
 

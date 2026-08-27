@@ -80,6 +80,8 @@ skip_peak_annotation = false  # params.skip_peak_annotation (default false — H
 min_reps_consensus = 1        # params.min_reps_consensus
 deseq2_vst = true             # params.deseq2_vst
 multiqc_custom_peaks = false  # port-only switch: emit MULTIQC_CUSTOM_PEAKS peak-count/FRiP TSVs
+skip_merge_replicates = false # params.skip_merge_replicates (upstream default false = merged-replicate analysis ON when replicate samples are declared)
+merged_samples = ""           # base names of replicate groups (e.g. "S1,S2" for samples S1_REP1/S1_REP2/S2_REP1/S2_REP2) — feeds merged-replicate files into the MultiQC / IGV aggregation rules; empty = no-op
 
 [[sample_groups]]
 name = "cohort"
@@ -391,8 +393,101 @@ memory = "36G"
 docker = "quay.io/biocontainers/mulled-v2-0560a8046fc82aa4338588eca29ff18edab2c5aa:5687a7da26983502d0a8a9a6b05ed727c740ddc4-0"
 
 [[rules]]
+name = "merge_replicates"
+input_groups = [
+    # Folds every per-replicate filtered BAM of one sample into a single
+    # instance (the upstream groupTuple on `meta.id - ~/_REP\d+$/`): files
+    # matching `{sample}_REP{rep}.mLb.clN.sorted.bam` group by the base
+    # sample prefix. One instance per group; groups with no files (no
+    # `_REP\d+` samples declared) instantiate nothing, so the default plan
+    # is unchanged. The merged BAM lands on the canonical
+    # `{sample}.mLb.clN.sorted.bam` path the per-sample chain would have
+    # written, so the downstream rules below read one path either way.
+    # Deviation vs upstream: 1-replicate groups still produce a merged BAM
+    # (upstream keeps them unmerged), and the merged BAM is not re-run
+    # through MarkDuplicates (upstream MERGED_REPLICATE_MARKDUPLICATES_PICARD
+    # re-marks duplicates on the merged set) — the per-replicate markdup
+    # state is retained.
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}_REP{rep}.mLb.clN.sorted.bam", group_by = "sample" },
+]
+output = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat",
+    "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats",
+]
+description = "PICARD_MERGESAMFILES_REPLICATE: merge per-replicate filtered BAMs into one merged BAM per sample + index + stats (upstream MERGED_REPLICATE_* chain head; replicate groups from the `_REP\\d+$` sample-suffix convention)"
+shell = """
+XMX=$(( {config.picard_xmx_gb} * 1024 ))
+# {input} is the space-joined group file list; turn it into repeated
+# --INPUT flags (paths in this port contain no spaces). Engines without
+# input_groups support (released builds before Traitome/oxo-flow#231)
+# cannot populate {input} — fail fast instead of feeding picard an empty
+# --INPUT list.
+if [ -z "$(printf '%s' "{input}" | tr -d '[:space:]')" ]; then
+    echo "merge_replicates: no per-replicate BAMs for '{sample}' — this engine build has no input_groups support (Traitome/oxo-flow#231); upgrade oxo-flow" >&2
+    exit 1
+fi
+INPUT_FLAGS=""
+for bam in {input}; do INPUT_FLAGS="$INPUT_FLAGS --INPUT $bam"; done
+picard \\
+    -Xmx${XMX}M \\
+    MergeSamFiles \\
+    --SORT_ORDER coordinate \\
+    --VALIDATION_STRINGENCY LENIENT \\
+    --TMP_DIR tmp \\
+    $INPUT_FLAGS \\
+    --OUTPUT {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam
+
+samtools \\
+    index \\
+    -@ 5 \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam
+
+samtools \\
+    stats \\
+    --threads {threads} \\
+    --reference {config.reference} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats
+
+samtools \\
+    flagstat \\
+    --threads {threads} \\
+    {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat
+
+samtools idxstats {config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam \\
+    > {config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats
+"""
+when = "!config.skip_merge_replicates && config.merged_samples != ''"
+
+[rules.resources]
+threads = 6
+memory = "36G"
+
+[rules.environment]
+conda = "envs/picard-samtools.yaml"
+
+[[rules]]
 name = "macs2_callpeak"
-input = ["{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam"]
+# One instance per filtered BAM present — the per-sample chain's
+# `bamtools_filter` outputs AND the `merge_replicates` merged BAMs, so
+# per-replicate and merged-replicate peak sets are both produced (upstream
+# MERGED_REPLICATE_CALL_ANNOTATE_PEAKS runs the same macs2 command on the
+# merged BAMs). On the default path (no `_REP\d+` samples) the instances
+# are exactly the per-sample ones.
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam", group_by = "sample" },
+]
+# Declared input (baseline): engines without input_groups support fall
+# back to this list and run the per-sample chain unchanged. On input_groups
+# engines the group file (the same path) leads {input}, so {input[0]} is
+# the filtered BAM either way.
+input = [
+    "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
+]
 output = [
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.gappedPeak",
@@ -425,6 +520,14 @@ docker = "quay.io/biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3"
 
 [[rules]]
 name = "homer_annotatepeaks"
+# One instance per peak set present (per-replicate and merged-replicate).
+# Group files render first in {input}: {input[0]} is the peaks file, the
+# declared reference/gtf inputs append after.
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", group_by = "sample" },
+]
+# The peaks file is also declared so engines without input_groups support
+# run the per-sample chain unchanged (there it is {input[0]} directly).
 input = [
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
     "{config.reference}",
@@ -452,6 +555,15 @@ docker = "quay.io/biocontainers/homer:4.11--pl526hc9558a2_3"
 
 [[rules]]
 name = "frip_score"
+# One instance per BAM present (per-replicate and merged-replicate);
+# the per-sample peak set is the trailing declared input — on input_groups
+# engines the group file (the same BAM) leads {input}, so {input[0]} is
+# the BAM and the peak set is the last entry either way; on engines
+# without input_groups support the declared inputs run the per-sample
+# chain unchanged.
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
@@ -459,7 +571,7 @@ input = [
 output = ["{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/{sample}.FRiP.txt"]
 description = "FRIP_SCORE: fraction of reads in peaks (feeds the excluded MULTIQC_CUSTOM_PEAKS upstream; kept as the pipeline runs it on the default path)"
 shell = """
-READS_IN_PEAKS=$(intersectBed -a {input[0]} -b {input[1]} -bed -c -f 0.20 | awk -F '\\t' '{sum += $NF} END {print sum}')
+READS_IN_PEAKS=$(intersectBed -a {input[0]} -b $(printf '%s\\n' {input} | tail -1) -bed -c -f 0.20 | awk -F '\\t' '{sum += $NF} END {print sum}')
 samtools flagstat {input[0]} > {input[0]}.flagstat
 grep 'mapped (' {input[0]}.flagstat | grep -v "primary" | awk -v a="$READS_IN_PEAKS" -v OFS='\\t' '{print "{sample}", a/$1}' > {output[0]}
 """
@@ -473,6 +585,15 @@ docker = "quay.io/biocontainers/mulled-v2-8186960447c5cb2faa697666dc1e6d919ad23f
 
 [[rules]]
 name = "bedtools_genomecov"
+# One instance per BAM present (per-replicate and merged-replicate);
+# the per-sample flagstat is the trailing declared input — on input_groups
+# engines the group file (the same BAM) leads {input}, so {input[0]} is
+# the BAM and the flagstat is the last entry either way; on engines
+# without input_groups support the declared inputs run the per-sample
+# chain unchanged.
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
     "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat",
@@ -483,7 +604,7 @@ output = [
 ]
 description = "BEDTOOLS_GENOMECOV: 1e6-read-normalised bedGraph track (single-end: -fs fragment_size, no -pc)"
 shell = """
-SCALE_FACTOR=$(grep '[0-9] mapped (' {input[1]} | awk '{print 1000000/$1}')
+SCALE_FACTOR=$(grep '[0-9] mapped (' $(printf '%s\\n' {input} | tail -1) | awk '{print 1000000/$1}')
 echo $SCALE_FACTOR > {config.out_dir}/bwa/merged_library/bigwig/scale/{sample}.mLb.clN.scale_factor.txt
 
 bedtools \\
@@ -507,6 +628,12 @@ docker = "quay.io/biocontainers/bedtools:2.30.0--hc088bd4_0"
 
 [[rules]]
 name = "ucsc_bedgraphtobigwig"
+# One instance per bedGraph present (per-replicate and merged-replicate).
+# The bedGraph is also declared so engines without input_groups support
+# run the per-sample chain unchanged ({input[0]} either way).
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bedGraph",
     "{config.chrom_sizes}",
@@ -529,6 +656,12 @@ docker = "quay.io/biocontainers/ucsc-bedgraphtobigwig:445--h954228d_0"
 
 [[rules]]
 name = "deeptools_plots"
+# One instance per bigWig present (per-replicate and merged-replicate).
+# The bigWig is also declared so engines without input_groups support run
+# the per-sample chain unchanged ({input[0]} either way).
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig",
     "{config.gene_bed}",
@@ -594,6 +727,13 @@ docker = "quay.io/biocontainers/deeptools:3.5.1--py_0"
 
 [[rules]]
 name = "plotfingerprint"
+# One instance per BAM present (per-replicate and merged-replicate);
+# the BAM is also declared so engines without input_groups support run
+# the per-sample chain unchanged ({input[0]} either way; the .bai rides
+# along for the DAG edge).
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam.bai",
@@ -648,6 +788,20 @@ expand_inputs = [
     { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt", variables = { sample = "config.samples_list" } },
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.samples_list" } },
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt", variables = { sample = "config.samples_list" } },
+    # merged-replicate files (config.merged_samples = the base names of the
+    # replicate groups, e.g. "S1,S2"); empty by default = no-op. The
+    # multiqc scan itself covers these files once they exist — these
+    # patterns make the merged-replicate chain a hard dependency so the
+    # report never races the merged analysis.
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.stats", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.flagstat", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/samtools_stats/{sample}.mLb.clN.sorted.bam.idxstats", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.reference_point.plotProfile.tab", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.raw.txt", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/deeptools/plotfingerprint/{sample}.mLb.clN.plotFingerprint.qcmetrics.txt", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt", variables = { sample = "config.merged_samples" } },
 ]
 output = ["{config.out_dir}/multiqc/multiqc_report.html"]
 description = "MULTIQC: aggregate QC report (upstream MULTIQC local module; multiqc_config.yml staged like upstream so `multiqc -f .` auto-loads it)"

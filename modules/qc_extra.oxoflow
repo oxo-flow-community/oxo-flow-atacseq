@@ -238,6 +238,16 @@ docker = "quay.io/biocontainers/mulled-v2-ad9dd5f398966bf899ae05f8e7c54d0fb10cdf
 
 [[rules]]
 name = "multiqc_custom_peaks"
+# One instance per peak set present (per-replicate and merged-replicate,
+# matching the upstream merged-replicate MULTIQC_CUSTOM_PEAKS); the
+# per-sample FRiP score is the trailing declared input — on input_groups
+# engines the group file (the same peak set) leads {input}, so {input[0]}
+# is the peak set and the FRiP score is the last entry either way; on
+# engines without input_groups support the declared inputs run the
+# per-sample chain unchanged.
+input_groups = [
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", group_by = "sample" },
+]
 input = [
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/qc/{sample}.FRiP.txt",
@@ -249,7 +259,7 @@ output = [
 description = "MULTIQC_CUSTOM_PEAKS: peak-count and FRiP custom content for MultiQC (upstream MULTIQC_CUSTOM_PEAKS; port-only switch config.multiqc_custom_peaks)"
 shell = """
 cat {input[0]} | wc -l | awk -v OFS='\\t' '{ print "{sample}", $1 }' | cat assets/multiqc/merged_library_peak_count_header.txt - > {output[0]}
-cat assets/multiqc/merged_library_frip_score_header.txt {input[1]} > {output[1]}
+cat assets/multiqc/merged_library_frip_score_header.txt $(printf '%s\\n' {input} | tail -1) > {output[1]}
 """
 when = "config.multiqc_custom_peaks"
 
@@ -267,6 +277,13 @@ expand_inputs = [
     { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", variables = { sample = "config.samples_list" } },
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.samples_list" } },
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/consensus/consensus_peaks.mLb.clN.bed", variables = { sample = "config.samples_list" } },
+    # merged-replicate tracks (config.merged_samples; empty = no-op) — the
+    # find-based scan below picks the files up once they exist; these
+    # patterns make the merged analysis a hard dependency. The session
+    # lists all merged_library bigWigs/peaks in one mLb_* set (upstream
+    # separates merged-replicate tracks into a second set — see README).
+    { pattern = "{config.out_dir}/bwa/merged_library/bigwig/{sample}.mLb.clN.bigWig", variables = { sample = "config.merged_samples" } },
+    { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.merged_samples" } },
 ]
 output = [
     "{config.out_dir}/igv/broad_peak/igv_session.xml",

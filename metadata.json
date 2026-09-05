@@ -13,7 +13,14 @@
   },
   "created": "2026-08-15",
   "domain": "epigenomics",
-  "tags": ["atac-seq", "peaks", "epigenomics", "single-end", "paired-end", "qc"],
+  "tags": [
+    "atac-seq",
+    "peaks",
+    "epigenomics",
+    "single-end",
+    "paired-end",
+    "qc"
+  ],
   "scope": [
     "fastqc",
     "trimgalore",
@@ -43,7 +50,8 @@
     "cons::macs2_consensus, cons::homer_annotatepeaks_consensus, cons::subread_featurecounts, cons::deseq2_qc (consensus peaks/DESeq2, when skip_consensus_peaks=false; needs >= 2 samples)",
     "merge_replicates (merged-replicate analysis, when skip_merge_replicates=false — replicate samples declared with the upstream _REP\\d+ suffix; folds per-replicate BAMs by base id via input_groups and feeds the merged BAM through the regular chain; see README 'Merged-replicate analysis')"
   ],
-  "excluded": [
+  "excluded": [],
+  "not_applicable": [
     "INPUT_CHECK (samplesheet_check) — pipeline plumbing; oxo-flow provides native [[sample_groups]] declaration + validate",
     "DUMP_SOFTWARE_VERSIONS — pipeline plumbing; oxo-flow has native version/audit mechanisms",
     "UMITOOLS_EXTRACT (umi branch) — dead code at 2.1.2: the workflow hardcodes with_umi=false so the branch can never fire",

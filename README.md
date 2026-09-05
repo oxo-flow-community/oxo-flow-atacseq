@@ -202,8 +202,11 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
   paired alignment options. Misconfigurations (e.g. `paired=true` with
   `aligner="star"`) surface as validation warnings via missing inputs.
 - **PE requires `bwa_index` and produces `bwa/library/` outputs**: the
-  paired branch's `bwa_mem_pe` merges read groups (`-R '@RG\tID:{sample}\tSM:{sample}'`)
-  as upstream does; the default SE path keeps the original `@RG` handling.
+  paired branch's `bwa_mem_pe` emits the full read group
+  (`-R '@RG\tID:{sample}\tSM:$SM\tPL:ILLUMINA\tLB:{sample}\tPU:1'`, where
+  `SM` strips a `_T[0-9]*` suffix from the sample) rather than upstream's
+  minimal `'@RG\tID:{sample}\tSM:{sample}'`; the default SE path keeps the
+  original `@RG` handling.
 - **Broad peaks are hardcoded**: the port's `macs2_callpeak` and all
   consumers use `--broad`; `narrow_peak = true` is honoured by
   `macs2_callpeak` but the downstream rules in this port read
@@ -227,6 +230,21 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 - **`size_factors/` stays in the workdir**: upstream DESeq2_QC publishes
   the `size_factors` directory; the port leaves it in the rule workdir
   (not declared as an output) — documented, not lost.
+- **Legacy image pin**: `qce::multiqc_custom_peaks`
+  (`modules/qc_extra.oxoflow`) still pins the retired
+  `quay.io/nf-core/ubuntu:20.04` image (upstream's shell-only rule used a
+  plain ubuntu container). It is kept as-is for byte-identical default
+  behavior; the rule is gated off by default (`multiqc_custom_peaks =
+  false`).
+- **Dry-run prints benign `input ✗` lines on the default plan**:
+  `{sample}.mLb.clN.sorted.bam` is declared as an output of both
+  `bamtools_filter` (per-sample chain, runs) and `merge_replicates`
+  (merged-replicate chain, off with the default empty `merged_samples`),
+  so a dry-run with no files on disk reports that path unresolved for
+  20 instances (per-sample consumers such as `macs2_callpeak`,
+  `bedtools_genomecov`, `frip_score`, `plotfingerprint`, their transitive
+  bigWig/peak consumers, and gated-off `pe::`/`qce::` copies).
+  `oxo-flow dry-run` still exits 0; a real run resolves the files.
 - **Consensus branch needs ≥ 2 samples**: upstream filters the peak
   channel to `size() > 1`; with one sample the consensus rules would
   produce degenerate output.

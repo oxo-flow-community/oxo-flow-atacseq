@@ -65,6 +65,8 @@ cd oxo-flow-atacseq
 | `blacklist` | optional include-regions BED (upstream ENCODE blacklist + chrM complement) — empty disables `-L` filtering |
 | `bowtie2_index` / `chromap_index` / `star_index` | index files for the alternative aligners (only when `aligner` is set to them) |
 
+> The port does **not** auto-do what upstream `prepare_genome` does: no GFF3→GTF conversion (`gffread`), no `.gz` decompression of reference/annotation files, no unpacking of prebuilt index tarballs (`untar`), and no khmer genome-size estimate. Supply a pre-built **uncompressed** GTF/BED/FASTA and **unpacked** index files; set `macs_gsize` explicitly for non-human genomes (default `2.7e9` = GRCh37/38 @ 50 bp — see Fidelity).
+
 **Input data**: single-end `raw/<sample>.fastq.gz` reads, named in
 `[[sample_groups]]` (see `test/fixtures/` for a tiny working set); the
 paired-end branch (`config.paired=true`) reads
@@ -163,7 +165,7 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 | MERGED_LIBRARY_DEEPTOOLS_PLOTFINGERPRINT | `plotfingerprint` / `pe::plotfingerprint_pe` | deeptools 3.5.1 | identical (`--extendReads fragment_size`); PE omits `--extendReads` (upstream) |
 | MULTIQC | `multiqc` / `pe::multiqc_pe` | multiqc 1.13 | upstream mechanism replicated: `multiqc_config.yml` staged in cwd, `multiqc -f .`; config `path_filters` adapted to this port's `results/` layout; PE adds the PE fastqc/trimgalore patterns |
 | BWA_INDEX | `ref::bwa_index` | bwa 0.7.17 | identical (`bwa index -p`); when `prepare_reference = true` (default false — port takes pre-built indexes) |
-| CUSTOM_GETCHROMSIZES / CUSTOM_GENOME_FASTA_INDEX (prepare_genome) | `ref::custom_getchromsizes` | samtools 1.16.1 | `samtools faidx` + `cut -f 1,2` into `config.chrom_sizes`; when `prepare_reference = true` |
+| CUSTOM_GETCHROMSIZES / CUSTOM_GENOME_FASTA_INDEX (prepare_genome) | `ref::custom_getchromsizes` | samtools 1.17 (envs/picard-samtools.yaml pin) | `samtools faidx` + `cut -f 1,2` into `config.chrom_sizes`; when `prepare_reference = true` |
 | GENOME_BLACKLIST_REGIONS (mitochondrial filtering) | `mito::genome_blacklist_regions` | bedtools 2.30.0 | sortBed/complementBed over `config.raw_blacklist`, then optional chrM drop (`config.mito_name`, `keep_mito`); when `mito_name`/`raw_blacklist` set; consumed via `-L` by `bamtools_filter` |
 | PRESEQ_LCEXTRAP | `qce::preseq_lcextrap` | preseq 3.1.2 | identical (`-verbose -bam -seed 1`; `-pe` when paired); when `skip_preseq = false` |
 | PICARD_COLLECTMULTIPLEMETRICS | `qce::picard_collectmultiplemetrics` | picard 3.0.0 | identical (5 metrics + PDFs into `picard_metrics/{,pdf}/`); when `skip_picard_metrics = false` |
@@ -177,6 +179,7 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 | PICARD_MERGESAMFILES / BAM_MARKDUPLICATES_PICARD / BAM_BEDGRAPH_BIGWIG_BEDTOOLS_UCSC / BAM_PEAKS_CALL_QC_ANNOTATE_MACS2_HOMER / BED_CONSENSUS_QUANTIFY_QC_BEDTOOLS_FEATURECOUNTS_DESEQ2 (aliased `MERGED_REPLICATE_*`) | `merge_replicates` + the same downstream rules | picard 3.0.0, samtools 1.17, macs2 2.2.7.1, homer 4.11, bedtools 2.30.0, deepTools 3.5.1 | **ported** via oxo-flow `input_groups`: `merge_replicates` folds per-replicate BAMs by base id (`_REP\d+$` suffix) and writes the merged BAM to the canonical `{sample}.mLb.clN.sorted.bam` path; the regular chain then runs on merged AND per-replicate inputs (same commands as upstream). when `skip_merge_replicates = false` (default); see "Merged-replicate analysis" below for semantics and deviations |
 | INPUT_CHECK (samplesheet_check) | — | — | **not ported** — pipeline plumbing; oxo-flow provides native `[[sample_groups]]` declaration + `validate` |
 | DUMP_SOFTWARE_VERSIONS | — | — | **not ported** — pipeline plumbing; oxo-flow has native version/audit mechanisms |
+| PREPARE_GENOME: GFFREAD, GUNZIP, UNTAR, KHMER_UNIQUEKMERS | — | — | **not ported** — reference convenience layer; the port requires pre-built uncompressed GTF/BED/FASTA, unpacked index files and an explicit `macs_gsize` (upstream `prepare_genome.nf` auto-converts GFF3→GTF, decompresses `.gz`, unpacks index tarballs and estimates genome size via khmer) |
 
 ### Known divergences
 
@@ -216,8 +219,11 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
   their branches are enabled (the PE MultiQC adds the PE fastqc/trimgalore
   logs). Report comment points at the upstream pipeline.
 - **`macs_gsize`**: upstream derives it from the read length keyed genome
-  block; the port exposes it as `config.macs_gsize` (default `2.7e9`, the
-  upstream GRCh37/38 @ 50 bp value).
+  block and auto-estimates via khmer when the value is empty; the port
+  exposes it as `config.macs_gsize` (default `2.7e9`, the upstream
+  GRCh37/38 @ 50 bp value — khmer auto-estimation is **not ported**, so
+  non-human genomes must set this explicitly or the MACS2 commands run
+  with the human genome size).
 - **IGV session lists one merged `mLb_*` track set**: upstream separates
   per-replicate and merged-replicate bigWigs/peaks into two IGV track sets
   (`mLb_*` vs `mLb_clN_*`); this port's `igv` rule scans

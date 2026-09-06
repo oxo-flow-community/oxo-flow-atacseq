@@ -34,7 +34,7 @@ tss_bed = "test/fixtures/genome/tss.bed"              # params.tss_bed
 chrom_sizes = "test/fixtures/genome/genome.fa.sizes"  # CUSTOM_GETCHROMSIZES output
 blacklist = ""                                        # params.blacklist — include-regions BED (complement of ENCODE
                                                       # blacklist + chrM when keep_mito=false); empty = no -L filter
-macs_gsize = "2.7e9"                                  # params.genomes[...].macs_gsize (read-length keyed, e.g. GRCh37/38 @50bp)
+macs_gsize = "2.7e9"                                  # params.genomes[...].macs_gsize (read-length keyed, e.g. GRCh37/38 @50bp); non-human genomes: set explicitly (upstream khmer auto-estimate is not ported)
 out_dir = "results"                                   # params.outdir
 raw_dir = "test/fixtures/raw"                         # input fastqs (raw/<sample>.fastq.gz for single-end)
 # GB passed to picard -Xmx. Previously derived from the rule's 36G

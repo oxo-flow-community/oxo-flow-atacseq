@@ -6,6 +6,7 @@
 #   config.paired=true                  paired-end reads (PE rule set in modules/paired.oxoflow)
 #   config.aligner=bowtie2|chromap|star alternative aligners (modules/aligners.oxoflow)
 #   config.prepare_reference=true       build BWA index + chrom sizes (modules/reference.oxoflow)
+#   config.macs_gsize=""                auto-estimate genome size with khmer at config.read_length (modules/reference.oxoflow)
 #   config.mito_name / raw_blacklist    mitochondrial filtering (modules/mito_filter.oxoflow)
 #   config.skip_consensus_peaks=false   consensus peaks/DESeq2 (modules/consensus.oxoflow)
 #   config.skip_preseq=false            preseq complexity extrapolation
@@ -34,7 +35,8 @@ tss_bed = "test/fixtures/genome/tss.bed"              # params.tss_bed
 chrom_sizes = "test/fixtures/genome/genome.fa.sizes"  # CUSTOM_GETCHROMSIZES output
 blacklist = ""                                        # params.blacklist — include-regions BED (complement of ENCODE
                                                       # blacklist + chrM when keep_mito=false); empty = no -L filter
-macs_gsize = "2.7e9"                                  # params.genomes[...].macs_gsize (read-length keyed, e.g. GRCh37/38 @50bp); non-human genomes: set explicitly (upstream khmer auto-estimate is not ported)
+macs_gsize = "2.7e9"                                  # params.genomes[...].macs_gsize (read-length keyed, e.g. GRCh37/38 @50bp); "" = auto-estimate via khmer at config.read_length (upstream KHMER_UNIQUEKMERS)
+read_length = 50                                      # params.read_length — khmer k-mer size for the macs_gsize auto-estimate
 out_dir = "results"                                   # params.outdir
 raw_dir = "test/fixtures/raw"                         # input fastqs (raw/<sample>.fastq.gz for single-end)
 # GB passed to picard -Xmx. Previously derived from the rule's 36G
@@ -488,6 +490,9 @@ input_groups = [
 input = [
     "{config.out_dir}/bwa/merged_library/{sample}.mLb.clN.sorted.bam",
 ]
+# khmer auto-estimate (config.macs_gsize = "") — when-gated producer; a closed
+# gate counts as satisfied for dependents, so this is safe on the default path.
+depends_on = ["ref::khmer_uniquekmers"]
 output = [
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak",
     "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.gappedPeak",
@@ -495,13 +500,22 @@ output = [
 ]
 description = "MACS2_CALLPEAK: call peaks with MACS2 (broad-peak default, no control, single-end BAM)"
 shell = """
+# config.macs_gsize = "" routes the genome size through the khmer estimate
+# (ref::khmer_uniquekmers); a fixed value is used as-is (upstream
+# `if (!params.macs_gsize)` wiring).
+if [ -n "{config.macs_gsize}" ]; then
+    GSIZE="{config.macs_gsize}"
+else
+    GSIZE=$(cat {config.out_dir}/genome/kmers.txt)
+fi
+
 macs2 \\
     callpeak \\
     --keep-dup all \\
     --nomodel \\
     --broad \\
     --broad-cutoff {config.broad_cutoff} \\
-    --gsize {config.macs_gsize} \\
+    --gsize $GSIZE \\
     --format BAM \\
     --name {sample}.mLb.clN \\
     --treatment {input[0]}

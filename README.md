@@ -65,7 +65,7 @@ cd oxo-flow-atacseq
 | `blacklist` | optional include-regions BED (upstream ENCODE blacklist + chrM complement) — empty disables `-L` filtering |
 | `bowtie2_index` / `chromap_index` / `star_index` | index files for the alternative aligners (only when `aligner` is set to them) |
 
-> The port does **not** auto-do what upstream `prepare_genome` does: no GFF3→GTF conversion (`gffread`), no `.gz` decompression of reference/annotation files, no unpacking of prebuilt index tarballs (`untar`), and no khmer genome-size estimate. Supply a pre-built **uncompressed** GTF/BED/FASTA and **unpacked** index files; set `macs_gsize` explicitly for non-human genomes (default `2.7e9` = GRCh37/38 @ 50 bp — see Fidelity).
+> The port does **not** auto-do what upstream `prepare_genome` does: no GFF3→GTF conversion (`gffread`), no `.gz` decompression of reference/annotation files, and no unpacking of prebuilt index tarballs (`untar`). Supply a pre-built **uncompressed** GTF/BED/FASTA and **unpacked** index files. The khmer genome-size estimate **is** ported: set `macs_gsize = ""` to auto-estimate from the FASTA at `read_length` (default `2.7e9` = GRCh37/38 @ 50 bp — see Fidelity).
 
 **Input data**: single-end `raw/<sample>.fastq.gz` reads, named in
 `[[sample_groups]]` (see `test/fixtures/` for a tiny working set); the
@@ -75,7 +75,7 @@ paired-end branch (`config.paired=true`) reads
 **Compute**: up to **12 CPUs / 72 GB per rule** (trimming, alignment and
 deepTools rules are the heaviest); a few rules need as little as 1 CPU / 6 GB.
 
-**Tools**: a mixed delivery — 40 of 43 rules run in **pinned Docker images**
+**Tools**: a mixed delivery — 41 of 44 rules run in **pinned Docker images**
 (`biocontainers/*` tags, e.g. `biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3`),
 executed by oxo-flow via Docker or Singularity; the remaining three rules
 (`picard_mergesamfiles`, `picard_markduplicates`, `merge_replicates`) share
@@ -98,7 +98,8 @@ oxo-flow run main.oxoflow -t multiqc --samples first:1
 Sample names are declared in `[[sample_groups]]` (`S1`, `S2` in the
 fixture set) — add your own names there or point `raw_dir` at your data.
 Pipeline behaviour is tuned through `[config]`: `macs_gsize` (default
-`2.7e9`), `narrow_peak`, `broad_cutoff`, `fragment_size`,
+`2.7e9`; `""` = khmer auto-estimate), `narrow_peak`, `broad_cutoff`,
+`fragment_size`,
 `min_trimmed_reads`, `out_dir`, and the `skip_*` toggles (`skip_fastqc`,
 `skip_qc`, `skip_trimming`, `skip_plot_profile`, `skip_plot_fingerprint`,
 `skip_multiqc`, `skip_peak_annotation`). All can be overridden on the CLI.
@@ -115,6 +116,7 @@ Nothing from a gated branch runs unless its key is set, and a
 | `paired = true` | paired-end: `pe::fastqc_pe`, `pe::trimgalore_pe`, `pe::bwa_mem_pe`, `pe::bamtools_filter_pe`, `pe::pe_name_sort_remove_orphans`, `pe::bedtools_genomecov_pe`, `pe::plotfingerprint_pe`, `pe::multiqc_pe` (8) | PE input path + BAM_SORT_STATS_ORPHANS (name sort + orphan removal) |
 | `aligner = "bowtie2"` / `"chromap"` / `"star"` | `alt::bowtie2_align` / `alt::chromap_align` / `alt::star_align` (3, SE only) | BOWTIE2_ALIGN / CHROMAP_CHROMAP / STAR_ALIGN |
 | `prepare_reference = true` | `ref::bwa_index`, `ref::custom_getchromsizes` (2) | BWA_INDEX, CUSTOM_GETCHROMSIZES (prepare_genome) |
+| `macs_gsize = ""` | `ref::khmer_uniquekmers` (1) | KHMER_UNIQUEKMERS (prepare_genome — genome-size auto-estimate at `read_length`) |
 | `mito_name = "chrM"` or `raw_blacklist = "<bed>"` | `mito::genome_blacklist_regions` (1) | GENOME_BLACKLIST_REGIONS (mitochondrial filtering) |
 | `skip_preseq = false` | `qce::preseq_lcextrap` (1) | PRESEQ_LCEXTRAP |
 | `skip_picard_metrics = false` | `qce::picard_collectmultiplemetrics` (1) | PICARD_COLLECTMULTIPLEMETRICS |
@@ -179,7 +181,8 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 | PICARD_MERGESAMFILES / BAM_MARKDUPLICATES_PICARD / BAM_BEDGRAPH_BIGWIG_BEDTOOLS_UCSC / BAM_PEAKS_CALL_QC_ANNOTATE_MACS2_HOMER / BED_CONSENSUS_QUANTIFY_QC_BEDTOOLS_FEATURECOUNTS_DESEQ2 (aliased `MERGED_REPLICATE_*`) | `merge_replicates` + the same downstream rules | picard 3.0.0, samtools 1.17, macs2 2.2.7.1, homer 4.11, bedtools 2.30.0, deepTools 3.5.1 | **ported** via oxo-flow `input_groups`: `merge_replicates` folds per-replicate BAMs by base id (`_REP\d+$` suffix) and writes the merged BAM to the canonical `{sample}.mLb.clN.sorted.bam` path; the regular chain then runs on merged AND per-replicate inputs (same commands as upstream). when `skip_merge_replicates = false` (default); see "Merged-replicate analysis" below for semantics and deviations |
 | INPUT_CHECK (samplesheet_check) | — | — | **not ported** — pipeline plumbing; oxo-flow provides native `[[sample_groups]]` declaration + `validate` |
 | DUMP_SOFTWARE_VERSIONS | — | — | **not ported** — pipeline plumbing; oxo-flow has native version/audit mechanisms |
-| PREPARE_GENOME: GFFREAD, GUNZIP, UNTAR, KHMER_UNIQUEKMERS | — | — | **not ported** — reference convenience layer; the port requires pre-built uncompressed GTF/BED/FASTA, unpacked index files and an explicit `macs_gsize` (upstream `prepare_genome.nf` auto-converts GFF3→GTF, decompresses `.gz`, unpacks index tarballs and estimates genome size via khmer) |
+| PREPARE_GENOME: GFFREAD, GUNZIP, UNTAR | — | — | **not ported** — reference convenience layer; the port requires pre-built uncompressed GTF/BED/FASTA and unpacked index files (upstream `prepare_genome.nf` auto-converts GFF3→GTF, decompresses `.gz`, unpacks index tarballs) |
+| PREPARE_GENOME: KHMER_UNIQUEKMERS | `ref::khmer_uniquekmers` | khmer 3.0.0a3 | **ported** — genome-size auto-estimate at `params.read_length`, wired into MACS2_CALLPEAK exactly as upstream (`if (!params.macs_gsize)` → khmer → `--gsize`); activate with `macs_gsize = ""` (upstream semantics: empty value = estimate); when gate `config.macs_gsize == ''` |
 
 ### Known divergences
 
@@ -218,12 +221,16 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
   ported steps; preseq/featureCounts/ataqv/DESeq2 sections appear when
   their branches are enabled (the PE MultiQC adds the PE fastqc/trimgalore
   logs). Report comment points at the upstream pipeline.
-- **`macs_gsize`**: upstream derives it from the read length keyed genome
-  block and auto-estimates via khmer when the value is empty; the port
-  exposes it as `config.macs_gsize` (default `2.7e9`, the upstream
-  GRCh37/38 @ 50 bp value — khmer auto-estimation is **not ported**, so
-  non-human genomes must set this explicitly or the MACS2 commands run
-  with the human genome size).
+- **`macs_gsize`**: upstream keys it off the read-length genome block and
+  auto-estimates via khmer when the value is empty; the port exposes it
+  as `config.macs_gsize` (default `2.7e9`, the upstream GRCh37/38 @ 50 bp
+  value). Setting `macs_gsize = ""` ports the upstream empty-value
+  semantics: `ref::khmer_uniquekmers` estimates the size from the FASTA
+  at `config.read_length` (upstream KHMER_UNIQUEKMERS) and macs2_callpeak
+  reads it into `--gsize`. Divergence: upstream additionally consults the
+  read-length keyed genome table (e.g. a non-empty `macs_gsize` there
+  overrides khmer); the port uses the explicit `config.macs_gsize` value
+  or the khmer estimate, nothing else.
 - **IGV session lists one merged `mLb_*` track set**: upstream separates
   per-replicate and merged-replicate bigWigs/peaks into two IGV track sets
   (`mLb_*` vs `mLb_clN_*`); this port's `igv` rule scans

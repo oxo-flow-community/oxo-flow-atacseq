@@ -43,4 +43,19 @@ if grep -q '{sample}' "$STRIPPED" || grep -q '{config\.' "$STRIPPED"; then
     exit 1
 fi
 
+echo "==> dry-run with macs_gsize=\"\" activates the khmer auto-estimate branch"
+# Upstream KHMER_UNIQUEKMERS: an empty params.macs_gsize routes MACS2_CALLPEAK's
+# --gsize through a khmer estimate at params.read_length. The port gates
+# ref::khmer_uniquekmers on config.macs_gsize == '' — override it via a sed'd
+# temp copy (the engine cannot pass empty-string --arg overrides; the copy
+# must live in this directory because [[include]] paths resolve relative to
+# the workflow file).
+sed 's/^macs_gsize = "2.7e9"/macs_gsize = ""/' main.oxoflow > .khmer-test-tmp.oxoflow
+grep -q '^macs_gsize = ""' .khmer-test-tmp.oxoflow  # the sed must have matched
+"$OXO" dry-run .khmer-test-tmp.oxoflow > /tmp/oxo-dryrun-khmer-$$.txt 2>&1
+grep -Eq 'khmer_uniquekmers  \[run:' /tmp/oxo-dryrun-khmer-$$.txt
+grep -Eq 'macs2_callpeak_S1  \[run:' /tmp/oxo-dryrun-khmer-$$.txt
+grep -Eq 'GSIZE=\$\(cat results/genome/kmers\.txt\)' /tmp/oxo-dryrun-khmer-$$.txt
+rm -f .khmer-test-tmp.oxoflow
+
 echo "PASS"

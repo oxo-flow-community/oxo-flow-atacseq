@@ -108,7 +108,7 @@ output = ["{config.gtf}"]
 description = "GUNZIP_GTF: decompress config.gtf_src to config.gtf (upstream GUNZIP_GTF; activated when config.gtf_src is non-empty)"
 shell = """
 mkdir -p $(dirname {config.gtf})
-gzip -cd {config.gtf_src} > {config.gtf} 2>/dev/null
+gzip -cd {config.gtf_src} > {config.gtf}
 """
 when = "config.gtf_src != ''"
 
@@ -182,7 +182,7 @@ output = ["{config.gene_bed}"]
 description = "GUNZIP_GENE_BED: decompress config.gene_bed_src to config.gene_bed (upstream GUNZIP_GENE_BED; activated when config.gene_bed_src is non-empty)"
 shell = """
 mkdir -p $(dirname {config.gene_bed})
-gzip -cd {config.gene_bed_src} > {config.gene_bed} 2>/dev/null
+gzip -cd {config.gene_bed_src} > {config.gene_bed}
 """
 when = "config.gene_bed_src != ''"
 
@@ -202,7 +202,7 @@ output = ["{config.tss_bed}"]
 description = "GUNZIP_TSS_BED: decompress config.tss_bed_src to config.tss_bed (upstream GUNZIP_TSS_BED; activated when config.tss_bed_src is non-empty)"
 shell = """
 mkdir -p $(dirname {config.tss_bed})
-gzip -cd {config.tss_bed_src} > {config.tss_bed} 2>/dev/null
+gzip -cd {config.tss_bed_src} > {config.tss_bed}
 """
 when = "config.tss_bed_src != ''"
 

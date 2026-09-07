@@ -94,3 +94,121 @@ memory = "6G"
 
 [rules.environment]
 docker = "quay.io/biocontainers/khmer:3.0.0a3--py37haa7609a_2"
+
+[[rules]]
+name = "gunzip_gtf"
+# Upstream GUNZIP_GTF (prepare_genome.nf): params.gtf.endsWith('.gz') →
+# decompress before HOMER (and any other GTF consumer) reads it. The
+# upstream nf-core comment is preserved (we use gzip -cd, not gunzip,
+# because gunzip preserves the original group ownership instead of the
+# default one for the user / the work directory). The output is the archive
+# minus '.gz' — the canonical {config.gtf} path.
+input = ["{config.gtf_src}"]
+output = ["{config.gtf}"]
+description = "GUNZIP_GTF: decompress config.gtf_src to config.gtf (upstream GUNZIP_GTF; activated when config.gtf_src is non-empty)"
+shell = """
+mkdir -p $(dirname {config.gtf})
+gzip -cd {config.gtf_src} > {config.gtf} 2>/dev/null
+"""
+when = "config.gtf_src != ''"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/nf-core/ubuntu:20.04"
+
+[[rules]]
+name = "gffread"
+# Upstream GFFREAD (prepare_genome.nf, else-if branch after GUNZIP_GTF): when
+# params.gtf is unset (empty) but params.gff is set, convert the GFF3 to GTF.
+# The port writes it to a fixed path -- {config.out_dir}/genome/index/ref.gtf --
+# because config.gtf is empty in this branch (the consumer's shell resolves
+# the produced file; upstream carries it on a channel, the port uses the
+# khmer-style fixed-path output + depends_on consumer pattern).
+input = ["{config.gff}"]
+output = ["{config.out_dir}/genome/index/ref.gtf"]
+description = "GFFREAD: convert GFF3 annotation to GTF (upstream GFFREAD; gffread 0.12.1, activated by config.gff non-empty and config.gtf empty)"
+shell = """
+mkdir -p {config.out_dir}/genome/index
+gffread {config.gff} --keep-exon-attrs -F -T -o {config.out_dir}/genome/index/ref.gtf
+"""
+# upstream: `if (params.gtf) { GUNZIP_GTF } else if (params.gff) { GFFREAD }`
+# — only when no GTF is provided (or .gz source given) does the GFF3 build one.
+when = "config.gff != '' && config.gtf == ''"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/gffread:0.12.1--h8b12597_0"
+
+[[rules]]
+name = "untar_bwa_index"
+# Upstream UNTAR_BWA_INDEX (prepare_genome.nf): params.bwa_index.endsWith('.tar.gz')
+# → unpack before BWA-MEM reads it. The output prefix is the archive minus
+# '.tar.gz' — the extracted index directory, written into
+# {config.out_dir}/genome/index/bwa. The single-top-dir detection is copied
+# verbatim from upstream: only strip the top component when the archive has
+# exactly one top-level directory.
+input = ["{config.bwa_index_src}"]
+output = ["{config.out_dir}/genome/index/bwa"]
+description = "UNTAR_BWA_INDEX: unpack a BWA index tarball (upstream UNTAR_BWA_INDEX; activated when config.bwa_index_src is non-empty)"
+shell = """
+mkdir -p {config.out_dir}/genome/index/bwa
+if [[ $(tar -taf {config.bwa_index_src} | grep -o -P "^.*?/" | uniq | wc -l) -eq 1 ]]; then
+    tar -C {config.out_dir}/genome/index/bwa --strip-components 1 -xavf {config.bwa_index_src}
+else
+    tar -C {config.out_dir}/genome/index/bwa -xavf {config.bwa_index_src}
+fi
+"""
+when = "config.bwa_index_src != ''"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/nf-core/ubuntu:20.04"
+
+[[rules]]
+name = "gunzip_gene_bed"
+# Upstream GUNZIP_GENE_BED (prepare_genome.nf): same GUNZIP semantics for
+# the gene BED consumed by deepTools.
+input = ["{config.gene_bed_src}"]
+output = ["{config.gene_bed}"]
+description = "GUNZIP_GENE_BED: decompress config.gene_bed_src to config.gene_bed (upstream GUNZIP_GENE_BED; activated when config.gene_bed_src is non-empty)"
+shell = """
+mkdir -p $(dirname {config.gene_bed})
+gzip -cd {config.gene_bed_src} > {config.gene_bed} 2>/dev/null
+"""
+when = "config.gene_bed_src != ''"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/nf-core/ubuntu:20.04"
+
+[[rules]]
+name = "gunzip_tss_bed"
+# Upstream GUNZIP_TSS_BED (prepare_genome.nf): same GUNZIP semantics for
+# the TSS BED consumed by deepTools and ataqv.
+input = ["{config.tss_bed_src}"]
+output = ["{config.tss_bed}"]
+description = "GUNZIP_TSS_BED: decompress config.tss_bed_src to config.tss_bed (upstream GUNZIP_TSS_BED; activated when config.tss_bed_src is non-empty)"
+shell = """
+mkdir -p $(dirname {config.tss_bed})
+gzip -cd {config.tss_bed_src} > {config.tss_bed} 2>/dev/null
+"""
+when = "config.tss_bed_src != ''"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/nf-core/ubuntu:20.04"

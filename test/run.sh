@@ -58,4 +58,71 @@ grep -Eq 'macs2_callpeak_S1  \[run:' /tmp/oxo-dryrun-khmer-$$.txt
 grep -Eq 'GSIZE=\$\(cat results/genome/kmers\.txt\)' /tmp/oxo-dryrun-khmer-$$.txt
 rm -f .khmer-test-tmp.oxoflow
 
+# --- Upstream PREPARE_GENOME convenience branches -------------------------------------
+# nf-core/atacseq 2.1.2 PREPARE_GENOME auto-decompresses .gz references and
+# auto-unpacks .tar.gz index archives before consumers touch them (GUNZIP,
+# GFFREAD, UNTAR, GTF2BED, TSS_EXTRACT). The port implements these as producer
+# rules whose outputs are the canonical uncompressed paths the consumers read;
+# consumers wire them via depends_on (a closed gate counts as satisfied, so
+# the default pre-built path is unchanged) and resolve the produced file at
+# shell level (khmer-style). Each branch-flip below activates one branch via a
+# sed'd temp copy and asserts that (a) the convenience rule schedules and
+# (b) the consumers still schedule.
+
+echo "==> dry-run with a .gz GTF source activates the gtf gunzip branch"
+# Upstream GUNZIP_GTF (prepare_genome.nf): when params.gtf ends with ".gz",
+# decompress before HOMER (and any other GTF consumer) reads it. The gunzip
+# output is the archive minus the ".gz" suffix — the canonical {config.gtf}
+# path the port's consumers already use. The port keeps the canonical consumer
+# key (config.gtf) separate from the compressed source slot (config.gtf_src):
+# set gtf_src to your .gz, and ref::gunzip_gtf unzips to config.gtf.
+sed 's|^gtf_src = ""|gtf_src = "test/fixtures/genome/genes.gtf.gz"|' main.oxoflow > .refgunzip-test-tmp.oxoflow
+grep -q '^gtf_src = "test/fixtures/genome/genes.gtf.gz"' .refgunzip-test-tmp.oxoflow  # the sed must have matched
+"$OXO" dry-run .refgunzip-test-tmp.oxoflow > /tmp/oxo-dryrun-refgunzip-$$.txt 2>&1
+grep -Eq 'gunzip_gtf  \[run:' /tmp/oxo-dryrun-refgunzip-$$.txt
+grep -Eq 'homer_annotatepeaks_S1  \[run:' /tmp/oxo-dryrun-refgunzip-$$.txt
+# homer's GTF selection picks the gunzipped canonical path (khmer-style
+# fallback: config.gtf prebuilt vs. gffread-derived ref.gtf).
+grep -Eq 'GTF="test/fixtures/genome/genes\.gtf"' /tmp/oxo-dryrun-refgunzip-$$.txt
+rm -f .refgunzip-test-tmp.oxoflow
+
+echo "==> dry-run with GFF3 annotation and no GTF activates the gffread branch"
+# Upstream GFFREAD (prepare_genome.nf): the else-if after `if (params.gtf)` —
+# when params.gtf is unset but params.gff is set, convert the GFF3 to GTF
+# (--keep-exon-attrs -F -T, gffread 0.12.1). The port gates ref::gffread on
+# config.gff != "" && config.gtf == "" — flip config.gtf to "" (the fixture
+# always ships a pre-built GTF, which routes the else-if the other way).
+sed 's|^gtf = "test/fixtures/genome/genes.gtf"|gtf = ""|; s|^gff = ""|gff = "test/fixtures/genome/genes.gff"|' main.oxoflow > .refgffread-test-tmp.oxoflow
+grep -q '^gff = "test/fixtures/genome/genes.gff"' .refgffread-test-tmp.oxoflow  # the sed must have matched
+grep -q '^gtf = ""' .refgffread-test-tmp.oxoflow
+"$OXO" dry-run .refgffread-test-tmp.oxoflow > /tmp/oxo-dryrun-refgffread-$$.txt 2>&1
+grep -Eq 'gffread  \[run:' /tmp/oxo-dryrun-refgffread-$$.txt
+grep -Eq 'homer_annotatepeaks_S1  \[run:' /tmp/oxo-dryrun-refgffread-$$.txt
+rm -f .refgffread-test-tmp.oxoflow
+
+echo "==> dry-run with a .gz gene/tss BED source activates the bed gunzip branches"
+# Upstream GUNZIP_GENE_BED / GUNZIP_TSS_BED (prepare_genome.nf): decompress
+# before deepTools reads the regions files. Same source-slot pattern as above.
+sed 's|^gene_bed_src = ""|gene_bed_src = "test/fixtures/genome/gene.bed.gz"|; s|^tss_bed_src = ""|tss_bed_src = "test/fixtures/genome/tss.bed.gz"|' main.oxoflow > .refbedgunzip-test-tmp.oxoflow
+grep -q '^gene_bed_src = "test/fixtures/genome/gene.bed.gz"' .refbedgunzip-test-tmp.oxoflow  # the sed must have matched
+grep -q '^tss_bed_src = "test/fixtures/genome/tss.bed.gz"' .refbedgunzip-test-tmp.oxoflow
+"$OXO" dry-run .refbedgunzip-test-tmp.oxoflow > /tmp/oxo-dryrun-refbedgunzip-$$.txt 2>&1
+grep -Eq 'gunzip_gene_bed  \[run:' /tmp/oxo-dryrun-refbedgunzip-$$.txt
+grep -Eq 'gunzip_tss_bed  \[run:' /tmp/oxo-dryrun-refbedgunzip-$$.txt
+grep -Eq 'deeptools_plots_S1  \[run:' /tmp/oxo-dryrun-refbedgunzip-$$.txt
+rm -f .refbedgunzip-test-tmp.oxoflow
+
+echo "==> dry-run with a .tar.gz BWA index source activates the untar branch"
+# Upstream UNTAR_BWA_INDEX (prepare_genome.nf): when params.bwa_index ends with
+# ".tar.gz", unpack it before BWA-MEM reads the index; the archive minus its
+# ".tar.gz" suffix is the index directory. The untar output (the index prefix
+# written at shell level via the find -name "*.amb" idiom) feeds bwa_mem:
+# the assert below pins that bwa_mem still schedules.
+sed 's|^bwa_index_src = ""|bwa_index_src = "test/fixtures/genome/genome-bwa-index.tar.gz"|' main.oxoflow > .refuntar-test-tmp.oxoflow
+grep -q '^bwa_index_src = "test/fixtures/genome/genome-bwa-index.tar.gz"' .refuntar-test-tmp.oxoflow  # the sed must have matched
+"$OXO" dry-run .refuntar-test-tmp.oxoflow > /tmp/oxo-dryrun-refuntar-$$.txt 2>&1
+grep -Eq 'untar_bwa_index  \[run:' /tmp/oxo-dryrun-refuntar-$$.txt
+grep -Eq 'bwa_mem_cohort_S1  \[run:' /tmp/oxo-dryrun-refuntar-$$.txt
+rm -f .refuntar-test-tmp.oxoflow
+
 echo "PASS"

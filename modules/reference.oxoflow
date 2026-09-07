@@ -5,11 +5,15 @@
 # config.bwa_index and the chrom sizes at config.chrom_sizes from
 # config.reference. Upstream runs these with save_reference=true publishing to
 # outdir/genome/index; this port writes directly to the configured paths.
+#
+# Also ports upstream KHMER_UNIQUEKMERS (config.macs_gsize = "" — empty means
+# auto-estimate, mirroring upstream `if (!params.macs_gsize)`), which writes
+# the estimated genome size consumed by macs2_callpeak.
 
 [workflow]
 name = "oxo-flow-atacseq-reference"
 version = "2.1.2"
-description = "Reference preparation branch of the nf-core/atacseq 2.1.2 port (gated by config.prepare_reference)"
+description = "Reference preparation branch of the nf-core/atacseq 2.1.2 port (gated by config.prepare_reference; khmer gsize auto-estimate gated by config.macs_gsize == \"\")"
 
 [[rules]]
 name = "bwa_index"
@@ -62,3 +66,31 @@ memory = "6G"
 
 [rules.environment]
 docker = "quay.io/biocontainers/samtools:1.16.1--h6899075_1"
+
+[[rules]]
+name = "khmer_uniquekmers"
+# Upstream KHMER_UNIQUEKMERS (prepare_genome.nf): when params.macs_gsize is
+# empty, estimate the genome size from the FASTA with khmer unique-kmers.py at
+# params.read_length, and feed the result to MACS2_CALLPEAK. Here: activated by
+# config.macs_gsize == "" (empty = auto-estimate); consumed via depends_on by
+# macs2_callpeak, which cats the written file when the gate is open.
+input = ["{config.reference}"]
+output = ["{config.out_dir}/genome/kmers.txt"]
+description = "KHMER_UNIQUEKMERS: estimate genome size with khmer unique-kmers.py at config.read_length (upstream KHMER_UNIQUEKMERS; activated by config.macs_gsize = \"\")"
+shell = """
+mkdir -p $(dirname {config.out_dir}/genome/kmers.txt)
+unique-kmers.py \\
+    -k {config.read_length} \\
+    -R report.txt \\
+    {config.reference}
+
+grep ^number report.txt | sed 's/^.*:.[[:blank:]]//g' > {config.out_dir}/genome/kmers.txt
+"""
+when = "config.macs_gsize == ''"
+
+[rules.resources]
+threads = 1
+memory = "6G"
+
+[rules.environment]
+docker = "quay.io/biocontainers/khmer:3.0.0a3--py37haa7609a_2"

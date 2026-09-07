@@ -65,7 +65,16 @@ cd oxo-flow-atacseq
 | `blacklist` | optional include-regions BED (upstream ENCODE blacklist + chrM complement) — empty disables `-L` filtering |
 | `bowtie2_index` / `chromap_index` / `star_index` | index files for the alternative aligners (only when `aligner` is set to them) |
 
-> The port does **not** auto-do what upstream `prepare_genome` does: no GFF3→GTF conversion (`gffread`), no `.gz` decompression of reference/annotation files, and no unpacking of prebuilt index tarballs (`untar`). Supply a pre-built **uncompressed** GTF/BED/FASTA and **unpacked** index files. The khmer genome-size estimate **is** ported: set `macs_gsize = ""` to auto-estimate from the FASTA at `read_length` (default `2.7e9` = GRCh37/38 @ 50 bp — see Fidelity).
+> The port does **not** auto-do what upstream `prepare_genome` does on the default config: reference/annotation files must be pre-built **uncompressed** GTF/BED/FASTA and **unpacked** index files. The convenience branches are available when you need them — set `gtf` to a `.gz` source? Leave it canonical and point `gtf_src` at the archive. The khmer genome-size estimate is on independently: set `macs_gsize = ""` to auto-estimate from the FASTA at `read_length` (default `2.7e9` = GRCh37/38 @ 50 bp — see Fidelity).
+>
+> | To do upstream `prepare_genome`: | set these config keys | happens |
+> |---|---|---|
+> | decompress a `.gz` GTF | `gtf_src` (canonical `gtf` stays fixed) | `ref::gunzip_gtf` (upstream GUNZIP_GTF) |
+> | GFF3 → GTF | `gff` *with* `gtf` left empty | `ref::gffread` (upstream GFFREAD); GTF goes to `results/genome/index/ref.gtf` |
+> | decompress a `.gz` gene/TSS BED | `gene_bed_src` / `tss_bed_src` | `ref::gunzip_gene_bed` / `ref::gunzip_tss_bed` |
+> | unpack a BWA index tarball | `bwa_index_src` (a `.tar.gz`) | `ref::untar_bwa_index`; the extracted index is found at runtime (`find -name "*.amb"`), exactly like upstream BWA_MEM |
+>
+> The `when`-gated convenience rules live in `modules/reference.oxoflow`; the consumer rules (HOMER, deepTools, BWA-MEM) pick them up via `depends_on` (a closed gate counts as satisfied, so the default pre-built path is unchanged) and resolve the file at shell level, mirroring the khmer genome-size wiring.
 
 **Input data**: single-end `raw/<sample>.fastq.gz` reads, named in
 `[[sample_groups]]` (see `test/fixtures/` for a tiny working set); the
@@ -75,7 +84,7 @@ paired-end branch (`config.paired=true`) reads
 **Compute**: up to **12 CPUs / 72 GB per rule** (trimming, alignment and
 deepTools rules are the heaviest); a few rules need as little as 1 CPU / 6 GB.
 
-**Tools**: a mixed delivery — 41 of 44 rules run in **pinned Docker images**
+**Tools**: a mixed delivery — 46 of 49 rules run in **pinned Docker images**
 (`biocontainers/*` tags, e.g. `biocontainers/macs2:2.2.7.1--py38h4a8c8d9_3`),
 executed by oxo-flow via Docker or Singularity; the remaining three rules
 (`picard_mergesamfiles`, `picard_markduplicates`, `merge_replicates`) share
@@ -181,7 +190,7 @@ listed with reasons. `when`-gated rules carry the gate in the Notes column.
 | PICARD_MERGESAMFILES / BAM_MARKDUPLICATES_PICARD / BAM_BEDGRAPH_BIGWIG_BEDTOOLS_UCSC / BAM_PEAKS_CALL_QC_ANNOTATE_MACS2_HOMER / BED_CONSENSUS_QUANTIFY_QC_BEDTOOLS_FEATURECOUNTS_DESEQ2 (aliased `MERGED_REPLICATE_*`) | `merge_replicates` + the same downstream rules | picard 3.0.0, samtools 1.17, macs2 2.2.7.1, homer 4.11, bedtools 2.30.0, deepTools 3.5.1 | **ported** via oxo-flow `input_groups`: `merge_replicates` folds per-replicate BAMs by base id (`_REP\d+$` suffix) and writes the merged BAM to the canonical `{sample}.mLb.clN.sorted.bam` path; the regular chain then runs on merged AND per-replicate inputs (same commands as upstream). when `skip_merge_replicates = false` (default); see "Merged-replicate analysis" below for semantics and deviations |
 | INPUT_CHECK (samplesheet_check) | — | — | **not ported** — pipeline plumbing; oxo-flow provides native `[[sample_groups]]` declaration + `validate` |
 | DUMP_SOFTWARE_VERSIONS | — | — | **not ported** — pipeline plumbing; oxo-flow has native version/audit mechanisms |
-| PREPARE_GENOME: GFFREAD, GUNZIP, UNTAR | — | — | **not ported** — reference convenience layer; the port requires pre-built uncompressed GTF/BED/FASTA and unpacked index files (upstream `prepare_genome.nf` auto-converts GFF3→GTF, decompresses `.gz`, unpacks index tarballs) |
+| PREPARE_GENOME: GFFREAD, GUNZIP, UNTAR | `ref::gffread` / `ref::gunzip_gtf` / `ref::gunzip_gene_bed` / `ref::gunzip_tss_bed` / `ref::untar_bwa_index` | gffread 0.12.1 / gzip (ubuntu:20.04) / tar | **ported** (when-gated): GFF3→GTF (upstream GFFREAD, `--keep-exon-attrs -F -T`, GTF written to `results/genome/index/ref.gtf`), `.gz` decompression (upstream GUNZIP semantics: `gzip -cd` — not `gunzip`, which preserves original group ownership), index tarball unpacking with upstream's single-top-dir `--strip-components` detection. Activated by `gtf_src` / `gff` / `gene_bed_src` / `tss_bed_src` / `bwa_index_src`; consumers resolve the produced files at shell level (`depends_on`, khmer-style) |
 | PREPARE_GENOME: KHMER_UNIQUEKMERS | `ref::khmer_uniquekmers` | khmer 3.0.0a3 | **ported** — genome-size auto-estimate at `params.read_length`, wired into MACS2_CALLPEAK exactly as upstream (`if (!params.macs_gsize)` → khmer → `--gsize`); activate with `macs_gsize = ""` (upstream semantics: empty value = estimate); when gate `config.macs_gsize == ''` |
 
 ### Known divergences

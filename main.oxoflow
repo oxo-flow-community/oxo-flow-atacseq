@@ -29,9 +29,14 @@ author = "oxo-flow-community"
 # this port expects pre-built files (see README "References").
 reference = "test/fixtures/genome/genome.fa"          # params.fasta
 bwa_index = "test/fixtures/genome/genome.fa"          # params.bwa — index prefix (.amb/.ann/.bwt/.pac/.sa beside it)
-gtf = "test/fixtures/genome/genes.gtf"                # params.gtf
-gene_bed = "test/fixtures/genome/gene.bed"            # params.gene_bed
-tss_bed = "test/fixtures/genome/tss.bed"              # params.tss_bed
+bwa_index_src = ""                                    # optional .tar.gz source; when set, ref::untar_bwa_index unpacks it before BWA-MEM (upstream UNTAR_BWA_INDEX)
+gtf = "test/fixtures/genome/genes.gtf"                # params.gtf — canonical GTF read by consumers (HOMER, ...)
+gtf_src = ""                                          # optional .gz source; when set, ref::gunzip_gtf unzips it to config.gtf (upstream GUNZIP_GTF)
+gff = ""                                              # params.gff — GFF3 annotation; when config.gtf is empty, GFFREAD converts it to results/genome/index/ref.gtf (upstream only uses params.gff when params.gtf is unset)
+gene_bed = "test/fixtures/genome/gene.bed"            # params.gene_bed — canonical gene BED read by consumers (deepTools, ...)
+gene_bed_src = ""                                     # optional .gz source; when set, ref::gunzip_gene_bed unzips it to config.gene_bed (upstream GUNZIP_GENE_BED)
+tss_bed = "test/fixtures/genome/tss.bed"              # params.tss_bed — canonical TSS BED read by consumers (deepTools, ataqv, ...)
+tss_bed_src = ""                                      # optional .gz source; when set, ref::gunzip_tss_bed unzips it to config.tss_bed (upstream GUNZIP_TSS_BED)
 chrom_sizes = "test/fixtures/genome/genome.fa.sizes"  # CUSTOM_GETCHROMSIZES output
 blacklist = ""                                        # params.blacklist — include-regions BED (complement of ENCODE
                                                       # blacklist + chrM when keep_mito=false); empty = no -L filter
@@ -184,14 +189,28 @@ input = [
     "{config.bwa_index}.sa",
 ]
 output = ["{config.out_dir}/bwa/library/{sample}.Lb.bam"]
+# Index comes from the pre-built prefix (default) or from ref::untar_bwa_index
+# (config.bwa_index_src = a .tar.gz). The shell resolves the prefix the same
+# way upstream BWA_MEM does (find -L ./ -name "*.amb"): the untar stage
+# extracts into {config.out_dir}/genome/index/bwa, so when config.bwa_index
+# is not a pre-built prefix the find locates the .amb inside it.
+depends_on = ["ref::untar_bwa_index"]
 description = "BWA_MEM: align with BWA-MEM and filter secondary alignments (upstream BWA_MEM, single-end)"
 shell = """
 SM=$(echo {sample} | sed 's/_T[0-9]*$//')
+# Default: config.bwa_index is a pre-built index prefix (.amb beside it).
+# .tar.gz: the prefix lives at {config.out_dir}/genome/index/bwa — the
+# find -name "*.amb" idiom mirrors upstream BWA_MEM's INDEX discovery.
+if [ -f "{config.bwa_index}.amb" ]; then
+    BWA_INDEX="{config.bwa_index}"
+else
+    BWA_INDEX=$(find -L {config.out_dir}/genome/index/bwa -name '*.amb' 2>/dev/null | sed 's/\\.amb$//')
+fi
 bwa mem \\
     -M \\
     -R '@RG\\tID:{sample}\\tSM:$SM\\tPL:ILLUMINA\\tLB:{sample}\\tPU:1' \\
     -t {threads} \\
-    {config.bwa_index} \\
+    $BWA_INDEX \\
     {input[0]} \\
     | samtools view -bh -F 0x0100 -O BAM -o {config.out_dir}/bwa/library/{sample}.Lb.bam -
 """
@@ -548,13 +567,25 @@ input = [
     "{config.gtf}",
 ]
 output = ["{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt"]
+# REF_GFF annotation comes from ref::gunzip_gtf (config.gtf_src) or
+# ref::gffread (config.gff) when engaged; a closed gate counts as satisfied,
+# so the default pre-built GTF path is unchanged.
+depends_on = ["ref::gunzip_gtf", "ref::gffread"]
 description = "HOMER_ANNOTATEPEAKS: annotate peaks with HOMER"
 shell = """
+# GTF source: pre-built config.gtf (default), or the GFFREAD-derived file at
+# {config.out_dir}/genome/index/ref.gtf when config.gtf is empty (see
+# ref::gffread / ref::gunzip_gtf; khmer-style selection like macs2_callpeak).
+if [ -n "{config.gtf}" ]; then
+    GTF="{config.gtf}"
+else
+    GTF="{config.out_dir}/genome/index/ref.gtf"
+fi
 annotatePeaks.pl \\
     {input[0]} \\
     {config.reference} \\
     -gid \\
-    -gtf {config.gtf} \\
+    -gtf $GTF \\
     -cpu {threads} \\
     > {output[0]}
 """
@@ -681,6 +712,10 @@ input = [
     "{config.gene_bed}",
     "{config.tss_bed}",
 ]
+# When the .gz sources are set, ref::gunzip_gene_bed / ref::gunzip_tss_bed
+# produce the canonical config.gene_bed / config.tss_bed; closed gates count
+# as satisfied, so the default pre-built BEDs are unchanged.
+depends_on = ["ref::gunzip_gene_bed", "ref::gunzip_tss_bed"]
 output = [
     "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.computeMatrix.mat.gz",
     "{config.out_dir}/bwa/merged_library/deeptools/plotprofile/{sample}.mLb.clN.scale_regions.computeMatrix.vals.mat.tab",

@@ -67,18 +67,14 @@
     "custom_getchromsizes",
     "khmer_uniquekmers"
   ],
-  "excluded": [
-    "GFFREAD (GFF3→GTF conversion, upstream prepare_genome) — not ported; the port requires a pre-built GTF (`config.gtf`)",
-    "GUNZIP of compressed reference/annotation files (upstream prepare_genome auto-decompresses `.gz` fasta/gtf/gff/bed/blacklist/tss) — not ported; reference files must be supplied uncompressed",
-    "UNTAR of prebuilt alignment-index tarballs (upstream prepare_genome accepts bwa/bowtie2/chromap/star index tarballs) — not ported; the port requires unpacked index files"
-  ],
+  "excluded": [],
   "not_applicable": [
     "INPUT_CHECK (samplesheet_check) — pipeline plumbing; oxo-flow provides native [[sample_groups]] declaration + validate",
     "DUMP_SOFTWARE_VERSIONS — pipeline plumbing; oxo-flow has native version/audit mechanisms",
     "UMITOOLS_EXTRACT (umi branch) — dead code at 2.1.2: the workflow hardcodes with_umi=false so the branch can never fire",
     "nucleosome_analysis / genrich — not present at tag 2.1.2 (checked workflows/, conf/, subworkflows/)"
   ],
-  "rule_count": 44,
+  "rule_count": 49,
   "tools": [
     "fastqc",
     "trim-galore",
@@ -101,10 +97,10 @@
     "deeptools",
     "multiqc"
   ],
-  "description": "ATAC-seq peak calling and QC: FastQC raw-read QC, Trim Galore adapter trimming, BWA-MEM alignment, Picard mark-duplicates, BAMTools filtering, MACS2 broad-peak calling, HOMER peak annotation, FRiP scoring, normalised bigWig tracks, deepTools QC plots and a combined MultiQC report. Default plan is the upstream single-end aligner=bwa main path (15 rules); when-gated branches port the paired-end path, Bowtie2/Chromap/STAR aligners, reference preparation, khmer genome-size auto-estimation (config.macs_gsize = \"\"), mitochondrial filtering, consensus peaks/DESeq2, preseq, Picard metrics, ataqv, IGV and R QC plots (28 further rules), and the merged-replicate analysis over _REP\\d+ sample groups (44 total).",
+  "description": "ATAC-seq peak calling and QC: FastQC raw-read QC, Trim Galore adapter trimming, BWA-MEM alignment, Picard mark-duplicates, BAMTools filtering, MACS2 broad-peak calling, HOMER peak annotation, FRiP scoring, normalised bigWig tracks, deepTools QC plots and a combined MultiQC report. Default plan is the upstream single-end aligner=bwa main path (15 rules); when-gated branches port the paired-end path, Bowtie2/Chromap/STAR aligners, reference preparation, khmer genome-size auto-estimation (config.macs_gsize = \"\"), mitochondrial filtering, consensus peaks/DESeq2, preseq, Picard metrics, ataqv, IGV and R QC plots (28 further rules), and the merged-replicate analysis over _REP\\d+ sample groups (49 total).",
   "installation": {
     "engine": "oxo-flow >= 0.12.0 (the merged-replicate mode — _REP\\d+ sample groups plus config.merged_samples — additionally requires oxo-flow with input_groups support, Traitome/oxo-flow#231; on released engines the gate is inert and the default path is unchanged)",
-    "toolchain": "containers (Docker/Singularity) — pinned images for 41 of 44 rules, plus one pinned conda env (envs/picard-samtools.yaml) shared by the three picard rules (picard_mergesamfiles, picard_markduplicates, merge_replicates)",
+    "toolchain": "containers (Docker/Singularity) — pinned images for 46 of 49 rules, plus one pinned conda env (envs/picard-samtools.yaml) shared by the three picard rules (picard_mergesamfiles, picard_markduplicates, merge_replicates)",
     "requirements": [
       "reference data: genome FASTA with .fai, BWA index prefix (.amb/.ann/.bwt/.pac/.sa), chrom sizes file, GTF annotation, gene BED, TSS BED (optional blacklist BED); alt-aligner indexes for aligner=bowtie2/chromap/star",
       "input: single-end <sample>.fastq.gz reads (default) or <sample>_1/2.fastq.gz (paired=true), declared in [[sample_groups]]; replicate groups use the upstream _REP\\d+ suffix and feed config.merged_samples (see README)",
@@ -114,5 +110,6 @@
   },
   "repo_url": "https://github.com/oxo-flow-community/oxo-flow-atacseq",
   "license": "Apache-2.0",
-  "upstream_license": "MIT"
+  "upstream_license": "MIT",
+  "updated": "2026-09-07"
 }

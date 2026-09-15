@@ -852,7 +852,11 @@ expand_inputs = [
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.broadPeak", variables = { sample = "config.merged_samples" } },
     { pattern = "{config.out_dir}/bwa/merged_library/macs2/broad_peak/{sample}.mLb.clN_peaks.annotatePeaks.txt", variables = { sample = "config.merged_samples" } },
 ]
-output = ["{config.out_dir}/multiqc/multiqc_report.html"]
+output = [
+    "{config.out_dir}/multiqc/multiqc_report.html",
+    "{config.out_dir}/multiqc/multiqc_data/",
+    "{config.out_dir}/multiqc/multiqc_plots/",
+]
 description = "MULTIQC: aggregate QC report (upstream MULTIQC local module; multiqc_config.yml staged like upstream so `multiqc -f .` auto-loads it)"
 shell = """
 ln -sf assets/multiqc_config.yml multiqc_config.yml

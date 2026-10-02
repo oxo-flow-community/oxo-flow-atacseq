@@ -5,6 +5,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OXO=${OXO:-oxo-flow}
 
+# The suite asserts `[run:` plan states, but oxo-flow's freshness gate skips a
+# rule only when its COMPLETE output set exists on disk (partial leftovers are
+# correctly re-run). This repo's results/ is gitignored, so any leftover tree
+# from a previous live run of main.oxoflow (e.g. the khmer branch's
+# results/genome/kmers.txt) silently flips `[run:` to `[skip: outputs
+# up-to-date]` on re-runs and breaks the assertions. CI clones are clean; local
+# and shared-server re-runs are not — start every suite from a clean slate.
+rm -rf results .oxo-flow logs
+
 echo "==> validate"
 "$OXO" validate main.oxoflow
 
